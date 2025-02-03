@@ -1,70 +1,109 @@
+import requests as rq
+from bs4 import BeautifulSoup as bs
+import pandas as pd
 from datetime import datetime
-import requests
-from bs4 import BeautifulSoup
-from typing import Dict, Optional, Tuple
+from pathlib import Path
+from .logger import CustomLogger
+
 
 class RBCParser:
-    """Parser for RBC news articles with focus on core content extraction"""
+    def __init__(self, config):
+        self.config = config
+        self.logger = CustomLogger(config)
 
-    def __init__(self, base_url: str):
-        self.BASE_URL = base_url
-        self.session = requests.Session()
+    def _get_url(self, param_dict: dict) -> str:
+        url = 'https://www.rbc.ru/search/ajax/?' + \
+              '&'.join(f"{k}={v}" for k, v in param_dict.items())
+        self.logger.debug(f"Generated URL: {url}")
+        return url
 
-    def _build_url(self, params: Dict[str, str]) -> str:
-        """Constructs search URL from parameters"""
-        query_params = {
-            'project': params['project'],
-            'category': params['category'],
-            'dateFrom': params['dateFrom'],
-            'dateTo': params['dateTo'],
-            'page': params['page'],
-            'query': params['query']
+    def _get_article_data(self, url: str):
+        try:
+            r = rq.get(url)
+            soup = bs(r.text, features="lxml")
+            div_overview = soup.find('div', {'class': 'article__text__overview'})
+            overview = div_overview.text.strip() if div_overview else None
+
+            p_text = soup.find_all('p')
+            text = ' '.join(p.text.strip() for p in p_text) if p_text else None
+
+            return overview, text
+        except Exception as e:
+            self.logger.error(f"Error parsing article {url}: {str(e)}")
+            return None, None
+
+    def _get_search_table(self, param_dict: dict) -> pd.DataFrame:
+        try:
+            url = self._get_url(param_dict)
+            r = rq.get(url)
+            search_table = pd.DataFrame(r.json()['items'])
+
+            if not search_table.empty and self.config.parser.include_text:
+                self.logger.info(f"Found {len(search_table)} articles on page {param_dict['page']}")
+                results = [self._get_article_data(row['fronturl']) for _, row in search_table.iterrows()]
+                overviews, texts = zip(*results)
+                search_table['overview'] = overviews
+                search_table['text'] = texts
+
+            if 'publish_date_t' in search_table.columns:
+                search_table.sort_values('publish_date_t', inplace=True, ignore_index=True)
+
+            return search_table
+        except Exception as e:
+            self.logger.error(f"Error getting search table: {str(e)}")
+            return pd.DataFrame()
+
+    def parse_articles(self):
+        param_dict = {
+            'query': self.config.parser.query,
+            'project': self.config.parser.project,
+            'category': self.config.parser.category,
+            'material': self.config.parser.material,
+            'dateFrom': datetime.strptime(self.config.parser.dateFrom, '%Y-%m-%d').strftime('%d.%m.%Y'),
+            'dateTo': datetime.strptime(self.config.parser.dateTo, '%Y-%m-%d').strftime('%d.%m.%Y'),
+            'page': str(self.config.parser.initial_page)
         }
-        return f"{self.BASE_URL}?{'&'.join(f'{k}={v}' for k, v in query_params.items())}"
 
-    def _get_article_content(self, url: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-        """Extract article title, text and overview from URL"""
+        self.logger.info(f"Starting parsing with parameters: {param_dict}")
+
+        results = []
+        page = self.config.parser.initial_page
+
+        while True:
+            # Проверяем ограничение по страницам
+            if page >= self.config.parser.max_pages:
+                self.logger.info(f"Reached maximum number of pages ({self.config.parser.max_pages})")
+                break
+
+            param_dict['page'] = str(page)
+            result = self._get_search_table(param_dict)
+
+            if result.empty:
+                self.logger.info(f"No more results found after page {page}")
+                break
+
+            results.append(result)
+            self.logger.info(f"Successfully parsed page {page}")
+            page += 1
+
+        if results:
+            final_df = pd.concat(results, ignore_index=True)
+            self._save_results(final_df)
+            return final_df
+        return pd.DataFrame()
+
+    def _save_results(self, df: pd.DataFrame):
         try:
-            response = self.session.get(url)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'lxml')
+            data_dir = Path(self.config.paths.data_dir)
+            data_dir.mkdir(parents=True, exist_ok=True)
 
-            title = soup.find('h1', {'class': 'article__header__title'})
-            title = title.text.strip() if title else None
+            # Формируем более информативное имя файла
+            filename = f"{self.config.output.file_prefix}_{self.config.parser.dateFrom}_to_{self.config.parser.dateTo}_pages_{self.config.parser.max_pages}.csv"
+            filepath = data_dir / filename
 
-            overview = soup.find('div', {'class': 'article__text__overview'})
-            overview = overview.text.strip() if overview else None
-
-            paragraphs = soup.find_all('p')
-            text = ' '.join(p.text.strip() for p in paragraphs) if paragraphs else None
-
-            return title, overview, text
+            df.to_csv(filepath, index=False, encoding=self.config.output.encoding)
+            self.logger.info(f"Results saved to {filepath}")
+            self.logger.info(f"Total articles parsed: {len(df)}")
+            self.logger.info(f"Absolute path to saved file: {filepath.absolute()}")
         except Exception as e:
-            print(f"Error processing {url}: {str(e)}")
-            return None, None, None
-
-    def get_articles_batch(self, params: Dict[str, str]) -> list:
-        """Fetch a batch of articles based on search parameters"""
-        try:
-            url = self._build_url(params)
-            response = self.session.get(url)
-            response.raise_for_status()
-
-            articles = []
-            for item in response.json()['items']:
-                title, overview, text = self._get_article_content(item['fronturl'])
-
-                article = {
-                    'title': title,
-                    'url': item['fronturl'],
-                    'category': params['category'],
-                    'date': datetime.fromtimestamp(item['publish_date_t']),
-                    'overview': overview,
-                    'text': text
-                }
-                articles.append(article)
-
-            return articles
-        except Exception as e:
-            print(f"Error fetching batch: {str(e)}")
-            return []
+            self.logger.error(f"Error saving results: {str(e)}")
