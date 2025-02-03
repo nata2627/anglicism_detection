@@ -1,2 +1,13 @@
 # Окружение
 venv
+
+# Логи
+*.log
+
+# Данные
+*.csv
+
+# Лишнее
+.DS_Store
+.idea/
+parse_dataset/utils/__pycache__/
