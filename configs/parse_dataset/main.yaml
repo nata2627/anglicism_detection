@@ -2,24 +2,24 @@ defaults:
   - _self_
 
 paths:
-  logs_dir: "logs"
+  log_dir: "logs"
   data_dir: "data"
 
 parser:
-  base_url: "https://www.rbc.ru/search/ajax/"
+  query: "РБК"
   project: "rbcnews"
   category: "TopRbcRu_economics"
-  page: "0"
-  query: ""
+  material: ""
+  dateFrom: "2025-02-02"
+  dateTo: "2025-02-03"
+  initial_page: 0
+  max_pages: 2
+  include_text: true
 
 logging:
-  file_level: "DEBUG"
-  console_level: "INFO"
-  format: "%(asctime)s - %(levelname)s - %(message)s"
-
-dates:
-  step_days: 2
-  days_back: 10
+  log_level: INFO
+  format: "[%(asctime)s][%(name)s][%(levelname)s] - %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
 
 output:
   file_prefix: "rbc_articles"
