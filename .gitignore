@@ -11,3 +11,6 @@ venv
 .DS_Store
 .idea/
 parse_dataset/utils/__pycache__/
+
+# Outputs
+outputs/

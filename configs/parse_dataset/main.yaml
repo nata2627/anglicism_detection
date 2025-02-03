@@ -1,0 +1,26 @@
+defaults:
+  - _self_
+
+paths:
+  logs_dir: "logs"
+  data_dir: "data"
+
+parser:
+  base_url: "https://www.rbc.ru/search/ajax/"
+  project: "rbcnews"
+  category: "TopRbcRu_economics"
+  page: "0"
+  query: ""
+
+logging:
+  file_level: "DEBUG"
+  console_level: "INFO"
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+
+dates:
+  step_days: 2
+  days_back: 10
+
+output:
+  file_prefix: "rbc_articles"
+  encoding: "utf-8"

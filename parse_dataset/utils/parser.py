@@ -6,9 +6,8 @@ from typing import Dict, Optional, Tuple
 class RBCParser:
     """Parser for RBC news articles with focus on core content extraction"""
 
-    BASE_URL = 'https://www.rbc.ru/search/ajax/'
-
-    def __init__(self):
+    def __init__(self, base_url: str):
+        self.BASE_URL = base_url
         self.session = requests.Session()
 
     def _build_url(self, params: Dict[str, str]) -> str:
