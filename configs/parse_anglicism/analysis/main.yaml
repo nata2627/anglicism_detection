@@ -1,3 +1,4 @@
+# Файл: configs/parse_anglicism/analysis/main.yaml
 # Конфигурация для анализатора англицизмов
 
 # Настройки анализа
@@ -5,6 +6,18 @@ perform_advanced: true
 analyze_patterns: true
 compare_languages: true
 top_n_languages: 5
+
+# Настройки для парсера
+patterns:
+  language_section: "== Из (.*?) =="
+  anglicism: "\\[\\[(.*?)\\]\\](.*?(?=\\[\\[|$))"
+  through_english: "через англ"
+
+# Настройки очистки
+cleaning:
+  lowercase: true
+  remove_special_chars: true
+  remove_duplicates: true
 
 # Настройки категорий длины слов
 length_categories:
@@ -19,3 +32,10 @@ letter_patterns:
   prefix_length: 2
   suffix_length: 2
   top_n: 10
+
+# Настройки путей
+paths:
+  data_dir: "data"
+  output_dir: "outputs"
+  logs_dir: "logs"
+  visualization_dir: "outputs/visualization"

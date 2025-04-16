@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="configs/parse_anglicism/analysis", config_name="main")
+@hydra.main(version_base=None, config_path="../configs/parse_anglicism/analysis", config_name="main")
 def main(cfg: DictConfig):
     """
     Основная функция для анализа англицизмов с использованием конфигурации Hydra.
