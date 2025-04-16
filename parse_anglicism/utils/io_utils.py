@@ -22,7 +22,7 @@ def setup_directory_structure(paths_config):
             logger.info(f"Создана директория: {path}")
 
     # Создание директории для изображений в outputs
-    images_dir = os.path.join(paths_config.outputs, "images")
+    images_dir = os.path.join(paths_config["output_dir"], "images")
     if not os.path.exists(images_dir):
         os.makedirs(images_dir)
         logger.info(f"Создана директория для изображений: {images_dir}")

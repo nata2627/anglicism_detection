@@ -21,19 +21,6 @@ from utils.analyzer import analyze_anglicisms, clean_anglicisms, advanced_analys
 from utils.visualizer import visualize_anglicisms
 from utils.io_utils import save_anglicisms, setup_directory_structure
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s][%(name)s][%(levelname)s] - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("parse_anglicism.log", encoding="utf-8")
-    ]
-)
-
-logger = logging.getLogger(__name__)
-
 
 @hydra.main(version_base=None, config_path="../configs/parse_anglicism/analysis", config_name="main")
 def main(cfg: DictConfig):
@@ -43,47 +30,42 @@ def main(cfg: DictConfig):
     Args:
         cfg (DictConfig): Конфигурация Hydra
     """
-    logger.info("Запуск анализа англицизмов")
-    logger.info(f"Конфигурация: {OmegaConf.to_yaml(cfg)}")
-
     # Настройка путей
     paths = {
         "data_dir": "data",
-        "output_dir": "outputs",
+        "input_dir": "data/inputs",
+        "output_dir": "data/outputs",
         "logs_dir": "logs",
-        "visualization_dir": "outputs/visualization"
+        "visualization_dir": "data/outputs/visualization"
     }
 
     # Создание структуры директорий
     setup_directory_structure(paths)
 
+    # Настройка логирования ПОСЛЕ создания структуры директорий
+    log_file = os.path.join(paths["logs_dir"], "parse_anglicism.log")
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s][%(name)s][%(levelname)s] - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_file, encoding="utf-8")
+        ]
+    )
+
+    logger = logging.getLogger(__name__)
+
+    logger.info("Запуск анализа англицизмов")
+    logger.info(f"Конфигурация: {OmegaConf.to_yaml(cfg)}")
+
     # Путь к файлу с англицизмами
-    input_file = os.path.join(paths["data_dir"], "angl.txt")
+    input_file = os.path.join(paths["input_dir"], "angl.txt")
 
     # Проверка наличия входного файла
     if not os.path.exists(input_file):
         logger.error(f"Файл с англицизмами не найден: {input_file}")
-        logger.info("Создаем пустой файл для тестирования...")
-
-        # Создаем директорию, если её нет
-        os.makedirs(os.path.dirname(input_file), exist_ok=True)
-
-        # Пример тестового содержимого
-        test_content = """== Из английского языка ==
-[[автомобиль]] происходит от англ. automobile
-[[компьютер]] происходит от англ. computer
-[[телефон]] происходит от англ. telephone
-
-== Из французского языка ==
-[[абажур]] происходит от фр. abat-jour
-[[балет]] происходит от фр. ballet через англ. ballet
-[[вуаль]] происходит от фр. voile
-"""
-        # Записываем тестовое содержимое
-        with open(input_file, "w", encoding="utf-8") as f:
-            f.write(test_content)
-
-        logger.info(f"Создан тестовый файл: {input_file}")
 
     # Парсинг англицизмов
     logger.info("Парсинг англицизмов из файла...")
@@ -126,7 +108,7 @@ def main(cfg: DictConfig):
     logger.info("=== СОЗДАНИЕ ВИЗУАЛИЗАЦИЙ ===")
 
     # Загрузка конфигурации визуализации
-    visualization_config_path = "configs/parse_anglicism/visualization/main.yaml"
+    visualization_config_path = "../configs/parse_anglicism/visualization/main.yaml"
     if os.path.exists(visualization_config_path):
         try:
             viz_cfg = OmegaConf.load(visualization_config_path)

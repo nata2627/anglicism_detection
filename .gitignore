@@ -7,11 +7,15 @@ venv
 # Данные
 *.csv
 *.txt
+*.png
+*.xlsx
+
 
 # Лишнее
 .DS_Store
 .idea/
 parse_dataset/utils/__pycache__/
+parse_anglicism/utils/__pycache__/
 
 # Outputs
 outputs/

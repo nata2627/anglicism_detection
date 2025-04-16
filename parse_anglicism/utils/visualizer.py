@@ -32,10 +32,10 @@ def visualize_with_config(cfg: DictConfig):
     # Здесь можно добавить код для загрузки DataFrame и вызова visualize_anglicisms
     # Например, загрузка из Excel-файла:
     try:
-        excel_path = "outputs/anglicisms_analysis.xlsx"
+        excel_path = "data/outputs/anglicisms_analysis.xlsx"
         if os.path.exists(excel_path):
             df = pd.read_excel(excel_path)
-            output_dir = "outputs/visualization_standalone"
+            output_dir = "data/outputs/visualization_standalone"
             visualize_anglicisms(df, output_dir, cfg)
         else:
             logger.error(f"Файл с данными не найден: {excel_path}")
@@ -211,7 +211,8 @@ def visualize_anglicisms(df, output_dir="visualization", cfg=None):
         if len(avg_length_by_lang) > top_n:
             avg_length_by_lang = avg_length_by_lang.head(top_n)
 
-        ax = sns.barplot(x=avg_length_by_lang.index, y=avg_length_by_lang.values, palette='viridis')
+        ax = sns.barplot(x=avg_length_by_lang.index, y=avg_length_by_lang.values, hue=avg_length_by_lang.index,
+                         legend=False, palette='viridis')
         plt.title('Средняя длина англицизмов по языкам происхождения', fontsize=16)
         plt.xlabel('Язык происхождения', fontsize=14)
         plt.ylabel('Средняя длина (символов)', fontsize=14)
@@ -236,7 +237,8 @@ def visualize_anglicisms(df, output_dir="visualization", cfg=None):
         if len(words_by_lang) > top_n:
             words_by_lang = words_by_lang.tail(top_n)
 
-        ax = sns.barplot(x=words_by_lang.values, y=words_by_lang.index, palette='viridis')
+        ax = sns.barplot(x=words_by_lang.values, y=words_by_lang.index, hue=words_by_lang.index, legend=False,
+                         palette='viridis')
         plt.title('Количество англицизмов по языкам происхождения', fontsize=16)
         plt.xlabel('Количество слов', fontsize=14)
         plt.ylabel('Язык происхождения', fontsize=14)
@@ -283,7 +285,8 @@ def visualize_anglicisms(df, output_dir="visualization", cfg=None):
     logger.info("Создание графика частотности первых букв")
     plt.figure(figsize=figure_sizes["default"])
     first_letters = df['word'].str[0].value_counts().sort_values(ascending=False).head(10)
-    ax = sns.barplot(x=first_letters.index, y=first_letters.values, palette='viridis')
+    ax = sns.barplot(x=first_letters.index, y=first_letters.values, hue=first_letters.index, legend=False,
+                     palette='viridis')
     plt.title('Топ-10 самых частых первых букв в англицизмах', fontsize=16)
     plt.xlabel('Буква', fontsize=14)
     plt.ylabel('Количество слов', fontsize=14)
