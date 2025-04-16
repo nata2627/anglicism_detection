@@ -46,9 +46,6 @@ def save_anglicisms(df, output_file, csv_output=None):
         # Создаем копию DataFrame с наиболее важными колонками
         export_df = df[['word', 'origin_language', 'word_length']].copy()
 
-        # Применяем дополнительную очистку языка происхождения
-        export_df['origin_language'] = export_df['origin_language'].apply(lambda x: clean_wiki_markup(x))
-
         # Переименовываем колонки для удобства
         export_df.columns = ['Англицизм', 'Язык происхождения', 'Длина слова']
 
