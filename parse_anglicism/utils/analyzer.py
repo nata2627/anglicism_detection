@@ -46,6 +46,9 @@ def clean_anglicisms(df, cfg=None):
     if remove_special_chars:
         clean_df['word'] = clean_df['word'].str.replace(r'[^\w\s]', '', regex=True)
 
+    # Дополнительная очистка языка происхождения
+    clean_df['origin_language'] = clean_df['origin_language'].apply(clean_wiki_markup)
+
     # Удаление дубликатов
     if remove_duplicates:
         clean_df = clean_df.drop_duplicates('word')
