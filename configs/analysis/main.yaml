@@ -1,0 +1,21 @@
+# Конфигурация для анализатора англицизмов
+
+# Настройки анализа
+perform_advanced: true
+analyze_patterns: true
+compare_languages: true
+top_n_languages: 5
+
+# Настройки категорий длины слов
+length_categories:
+  bins: [0, 4, 8, 12, 100]
+  labels: ['Короткие (1-4)', 'Средние (5-8)', 'Длинные (9-12)', 'Очень длинные (>12)']
+
+# Настройки буквенных паттернов
+letter_patterns:
+  analyze_suffixes: true
+  analyze_prefixes: true
+  analyze_bigrams: true
+  prefix_length: 2
+  suffix_length: 2
+  top_n: 10

@@ -6,6 +6,7 @@ venv
 
 # Данные
 *.csv
+*.txt
 
 # Лишнее
 .DS_Store
