@@ -9,7 +9,7 @@ venv
 *.txt
 *.png
 *.xlsx
-
+*.pyc
 
 # Лишнее
 .DS_Store
