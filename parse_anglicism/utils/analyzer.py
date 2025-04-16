@@ -142,18 +142,30 @@ def clean_anglicisms(df, cfg=None):
     return clean_df
 
 
-def advanced_analysis(df):
+def advanced_analysis(df, cfg=None):
     """
     Проводит расширенный анализ англицизмов.
 
     Args:
         df (DataFrame): DataFrame с англицизмами
+        cfg (DictConfig, optional): Конфигурация для анализа
 
     Returns:
         dict: Словарь с результатами анализа
     """
     # Создаем словарь для хранения результатов анализа
     analysis_results = {}
+
+    # Настройки категорий длины слов
+    bins = [0, 4, 8, 12, 100]
+    labels = ['Короткие (1-4)', 'Средние (5-8)', 'Длинные (9-12)', 'Очень длинные (>12)']
+
+    # Загрузка настроек из конфигурации, если она передана
+    if cfg is not None and hasattr(cfg, 'length_categories'):
+        if hasattr(cfg.length_categories, 'bins'):
+            bins = cfg.length_categories.bins
+        if hasattr(cfg.length_categories, 'labels'):
+            labels = cfg.length_categories.labels
 
     # 1. Анализ длины слов по языкам
     length_by_lang = df.groupby('origin_language')['word_length'].agg(['mean', 'median', 'min', 'max', 'count'])
@@ -164,13 +176,14 @@ def advanced_analysis(df):
     logger.info(length_by_lang.head(10).to_string())
 
     # 2. Анализ англицизмов, пришедших через английский, по языкам
-    through_eng_by_lang = df.groupby('origin_language')['through_english'].mean() * 100
-    through_eng_by_lang = through_eng_by_lang.sort_values(ascending=False)
-    analysis_results['through_english_by_language'] = through_eng_by_lang
+    if 'through_english' in df.columns:
+        through_eng_by_lang = df.groupby('origin_language')['through_english'].mean() * 100
+        through_eng_by_lang = through_eng_by_lang.sort_values(ascending=False)
+        analysis_results['through_english_by_language'] = through_eng_by_lang
 
-    logger.info("Доля англицизмов, пришедших через английский, по языкам происхождения (%):")
-    for lang, percentage in through_eng_by_lang.head(10).items():
-        logger.info(f"  {lang}: {percentage:.2f}%")
+        logger.info("Доля англицизмов, пришедших через английский, по языкам происхождения (%):")
+        for lang, percentage in through_eng_by_lang.head(10).items():
+            logger.info(f"  {lang}: {percentage:.2f}%")
 
     # 3. Анализ частотности букв
     all_letters = ''.join(df['word'].str.lower())
@@ -198,8 +211,6 @@ def advanced_analysis(df):
         logger.info(f"  {lang}: {ratio:.2f}%")
 
     # 6. Создаем новую колонку для категоризации длины слов
-    bins = [0, 4, 8, 12, 100]
-    labels = ['Короткие (1-4)', 'Средние (5-8)', 'Длинные (9-12)', 'Очень длинные (>12)']
     df['length_category'] = pd.cut(df['word_length'], bins=bins, labels=labels, right=False)
 
     length_category_counts = df['length_category'].value_counts().sort_index()
@@ -212,17 +223,23 @@ def advanced_analysis(df):
     return analysis_results
 
 
-def compare_languages(df, top_n=5):
+def compare_languages(df, top_n=5, cfg=None):
     """
     Проводит сравнительный анализ англицизмов по языкам происхождения.
 
     Args:
         df (DataFrame): DataFrame с англицизмами
         top_n (int): Количество языков для сравнения
+        cfg (DictConfig, optional): Конфигурация для сравнения
 
     Returns:
         DataFrame: DataFrame со сравнительными данными
     """
+    # Загрузка настроек из конфигурации, если она передана
+    if cfg is not None and hasattr(cfg, 'compare_languages'):
+        if hasattr(cfg.compare_languages, 'top_n_languages'):
+            top_n = cfg.compare_languages.top_n_languages
+
     # Получаем топ-N языков по количеству англицизмов
     top_languages = df['origin_language'].value_counts().head(top_n).index.tolist()
 
@@ -262,34 +279,66 @@ def compare_languages(df, top_n=5):
     return comparison_df
 
 
-def analyze_letter_patterns(df):
+def analyze_letter_patterns(df, cfg=None):
     """
     Анализирует паттерны букв в англицизмах.
 
     Args:
         df (DataFrame): DataFrame с англицизмами
+        cfg (DictConfig, optional): Конфигурация для анализа паттернов
 
     Returns:
         dict: Словарь с результатами анализа
     """
     pattern_results = {}
 
-    # 1. Анализ суффиксов (последние 2 буквы)
-    df['suffix'] = df['word'].apply(lambda x: x[-2:] if len(x) >= 2 else x)
-    suffix_counts = df['suffix'].value_counts().head(10)
+    # Настройки по умолчанию
+    prefix_length = 2
+    suffix_length = 2
+    top_n = 10
+
+    # Загрузка настроек из конфигурации, если она передана
+    if cfg is not None and hasattr(cfg, 'letter_patterns'):
+        if hasattr(cfg.letter_patterns, 'prefix_length'):
+            prefix_length = cfg.letter_patterns.prefix_length
+        if hasattr(cfg.letter_patterns, 'suffix_length'):
+            suffix_length = cfg.letter_patterns.suffix_length
+        if hasattr(cfg.letter_patterns, 'top_n'):
+            top_n = cfg.letter_patterns.top_n
+
+    # 1. Анализ суффиксов
+    df['suffix'] = df['word'].apply(lambda x: x[-suffix_length:] if len(x) >= suffix_length else x)
+    suffix_counts = df['suffix'].value_counts().head(top_n)
     pattern_results['top_suffixes'] = suffix_counts
 
-    logger.info("Топ-10 самых частых суффиксов (последние 2 буквы):")
+    logger.info(f"Топ-{top_n} самых частых суффиксов (последние {suffix_length} буквы):")
     for suffix, count in suffix_counts.items():
         logger.info(f"  '{suffix}': {count} слов")
 
-    # 2. Анализ префиксов (первые 2 буквы)
-    df['prefix'] = df['word'].apply(lambda x: x[:2] if len(x) >= 2 else x)
-    prefix_counts = df['prefix'].value_counts().head(10)
+    # 2. Анализ префиксов
+    df['prefix'] = df['word'].apply(lambda x: x[:prefix_length] if len(x) >= prefix_length else x)
+    prefix_counts = df['prefix'].value_counts().head(top_n)
     pattern_results['top_prefixes'] = prefix_counts
 
-    logger.info("Топ-10 самых частых префиксов (первые 2 буквы):")
+    logger.info(f"Топ-{top_n} самых частых префиксов (первые {prefix_length} буквы):")
     for prefix, count in prefix_counts.items():
         logger.info(f"  '{prefix}': {count} слов")
 
-    # 3.
+    # 3. Биграммы (пары последовательных букв)
+    bigrams = []
+    for word in df['word']:
+        for i in range(len(word) - 1):
+            bigrams.append(word[i:i + 2])
+
+    bigram_counts = pd.Series(Counter(bigrams)).sort_values(ascending=False).head(top_n)
+    pattern_results['top_bigrams'] = bigram_counts
+
+    logger.info(f"Топ-{top_n} самых частых биграмм (пар букв):")
+    for bigram, count in bigram_counts.items():
+        logger.info(f"  '{bigram}': {count} вхождений")
+
+    return pattern_results
+
+
+if __name__ == "__main__":
+    analyze_with_config()

@@ -5,31 +5,33 @@ import re
 import logging
 from collections import defaultdict
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
 
 
 @hydra.main(
     version_base=None,
-    config_path="../configs/parse_dataset",
+    config_path="../configs/parse_anglicism/analysis",
     config_name="main"
 )
-def parse_anglicisms_with_config(cfg: DictConfig, file_path: str = None):
+def parse_anglicisms_with_config(cfg: DictConfig):
     """
     Парсит англицизмы из файла формата Викисловаря с использованием конфигурации.
 
     Args:
         cfg (DictConfig): Конфигурация Hydra
-        file_path (str, optional): Путь к файлу с англицизмами
 
     Returns:
         dict: Словарь англицизмов с их происхождением
     """
-    # Эта функция используется для запуска парсера отдельно через Hydra
-    if file_path is None:
-        file_path = 'data/inputs/angl.txt'
+    # Определяем путь к файлу из конфигурации
+    if hasattr(cfg, 'paths') and hasattr(cfg.paths, 'data_dir'):
+        file_path = f"{cfg.paths.data_dir}/angl.txt"
+    else:
+        file_path = 'data/angl.txt'
 
+    logger.info(f"Парсинг англицизмов из файла {file_path} с использованием конфигурации")
     return parse_anglicisms(file_path, cfg)
 
 
@@ -51,10 +53,17 @@ def parse_anglicisms(file_path, cfg=None):
         anglicism_pattern = r'\[\[(.*?)\]\](.*?(?=\[\[|$))'
         through_english_pattern = r'через англ'
     else:
-        # Используем значения из конфигурации
-        language_section_pattern = cfg.patterns.language_section
-        anglicism_pattern = cfg.patterns.anglicism
-        through_english_pattern = cfg.patterns.through_english
+        # Проверяем наличие секции patterns
+        if hasattr(cfg, 'patterns'):
+            # Загружаем из конфигурации или используем значения по умолчанию
+            language_section_pattern = getattr(cfg.patterns, 'language_section', r'== Из (.*?) ==')
+            anglicism_pattern = getattr(cfg.patterns, 'anglicism', r'\[\[(.*?)\]\](.*?(?=\[\[|$))')
+            through_english_pattern = getattr(cfg.patterns, 'through_english', r'через англ')
+        else:
+            # Если секции patterns нет, используем значения по умолчанию
+            language_section_pattern = r'== Из (.*?) =='
+            anglicism_pattern = r'\[\[(.*?)\]\](.*?(?=\[\[|$))'
+            through_english_pattern = r'через англ'
 
     logger.info(f"Чтение файла: {file_path}")
 
@@ -62,6 +71,9 @@ def parse_anglicisms(file_path, cfg=None):
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
             content = file.read()
+    except FileNotFoundError:
+        logger.error(f"Файл не найден: {file_path}")
+        return {"by_language": {}, "all_anglicisms": []}
     except Exception as e:
         logger.error(f"Ошибка при чтении файла: {e}")
         return {"by_language": {}, "all_anglicisms": []}
