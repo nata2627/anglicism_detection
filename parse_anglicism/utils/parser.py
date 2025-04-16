@@ -6,9 +6,8 @@ logger = logging.getLogger(__name__)
 
 
 def parse_anglicisms(file_path, cfg=None):
-
     # Загрузка настроек паттернов из конфигурации
-    language_section_pattern = r'== Из (.*?) =='
+    language_section_pattern = r'== Из \[\[(.*?)(?:\|.*?)?\]\](?:.*?)? =='
     anglicism_pattern = r'\[\[(.*?)\]\](.*?(?=\[\[|$))'
     through_english_pattern = r'через англ'
 
@@ -40,7 +39,17 @@ def parse_anglicisms(file_path, cfg=None):
         language_match = re.search(language_section_pattern, line)
         if language_match:
             current_language = language_match.group(1)
+            # Если в языке есть часть после |, берем только первую часть
+            if '|' in current_language:
+                current_language = current_language.split('|')[0]
             continue
+
+        # Если язык не найден через регулярное выражение, попробуем обычный паттерн
+        if not language_match:
+            simple_match = re.search(r'== Из (.*?) ==', line)
+            if simple_match:
+                current_language = simple_match.group(1)
+                continue
 
         # Если текущий язык определен, ищем англицизмы
         if current_language:
@@ -83,14 +92,25 @@ def parse_anglicisms(file_path, cfg=None):
 
 
 def clean_wiki_markup(text):
-    # Удаление двойных квадратных скобок и содержимого между вертикальной чертой и закрывающими скобками
+    # Удаление части после "|" внутри двойных квадратных скобок
     text = re.sub(r'\[\[([^|]+)\|[^\]]+\]\]', r'\1', text)
 
-    # Удаление двойных квадратных скобок без вертикальной черты
+    # Удаление двойных квадратных скобок
     text = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
 
     # Удаление одиночных квадратных скобок
     text = re.sub(r'\[([^\]]+)\]', r'\1', text)
+
+    # Удаление различных суффиксов с окончаниями для языков
+    text = re.sub(r'(\w+)(ов|ский язык|ского|ской|ская|ское|ские|цы|цев|цкий|ный|ная|ное|ные|язык|языки|кий)', r'\1',
+                  text)
+
+    # Удаление лишних пробелов и обработка специальных случаев
+    text = text.strip()
+
+    # Специальная обработка для "абориген]]ов [[Австралия"
+    if "абориген" in text and "Австралия" in text:
+        text = "абориген"
 
     # Удаление других возможных элементов разметки
     text = re.sub(r'<[^>]+>', '', text)
