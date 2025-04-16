@@ -1,0 +1,86 @@
+analysis:
+  # Настройки анализа
+  perform_advanced: true
+  analyze_patterns: true
+  compare_languages: true
+  top_n_languages: 5
+
+  # Настройки для парсера
+  patterns:
+    language_section: "== Из (.*?) =="
+    anglicism: "\\[\\[(.*?)\\]\\](.*?(?=\\[\\[|$))"
+    through_english: "через англ"
+
+  # Настройки очистки
+  cleaning:
+    lowercase: true
+    remove_special_chars: true
+    remove_duplicates: true
+
+  # Настройки категорий длины слов
+  length_categories:
+    bins: [ 0, 4, 8, 12, 100 ]
+    labels: [ 'Короткие (1-4)', 'Средние (5-8)', 'Длинные (9-12)', 'Очень длинные (>12)' ]
+
+  # Настройки буквенных паттернов
+  letter_patterns:
+    analyze_suffixes: true
+    analyze_prefixes: true
+    analyze_bigrams: true
+    prefix_length: 2
+    suffix_length: 2
+    top_n: 10
+
+  # Настройки путей
+  paths:
+    data_dir: "data"
+    output_dir: "outputs"
+    logs_dir: "logs"
+    visualization_dir: "outputs/visualization"
+
+visualization:
+  # Общие настройки визуализации
+  visualization:
+    enabled: true
+    dpi: 300
+    font_family: DejaVu Sans
+    save_formats:
+      - png
+      - svg
+    style: whitegrid
+
+    # Размеры графиков
+    figure_sizes:
+      default: [ 12, 8 ]
+      pie_chart: [ 12, 8 ]
+      histogram: [ 12, 8 ]
+      bar_plot: [ 14, 10 ]
+      hbar_plot: [ 14, 10 ]
+      word_cloud: [ 14, 10 ]
+      boxplot: [ 16, 10 ]
+      heatmap: [ 10, 8 ]
+      table: [ 10, 8 ]
+
+    # Настройки цветов
+    colors:
+      primary: '#3498db'
+      secondary: '#e74c3c'
+      accent: '#2ecc71'
+      pie_cmap: 'viridis'
+      heatmap_cmap: 'coolwarm'
+
+    # Настройки пределов для графиков
+    limits:
+      top_languages_pie: 8
+      top_languages_bar: 15
+      min_words_per_language: 5
+      max_words_wordcloud: 200
+
+    # Настройки отображения таблицы
+    table:
+      scale_x: 1.2
+      scale_y: 1.5
+      header_bgcolor: '#4CAF50'
+      header_color: 'white'
+      even_row_bgcolor: '#f0f0f0'
+      odd_row_bgcolor: 'white'
