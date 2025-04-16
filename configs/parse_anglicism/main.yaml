@@ -1,0 +1,40 @@
+analysis:
+  # Основные настройки анализа
+  perform_advanced: true
+
+  # Настройки для парсера
+  patterns:
+    language_section: "== Из (.*?) =="
+    anglicism: "\\[\\[(.*?)\\]\\](.*?(?=\\[\\[|$))"
+    through_english: "через англ"
+
+  # Настройки очистки
+  cleaning:
+    lowercase: true
+    remove_special_chars: true
+    remove_duplicates: true
+
+  # Настройки путей
+  paths:
+    data_dir: "data"
+    output_dir: "outputs"
+    logs_dir: "logs"
+    visualization_dir: "outputs/visualization"
+
+visualization:
+  # Общие настройки визуализации
+  visualization:
+    enabled: true
+    dpi: 300
+    font_family: DejaVu Sans
+    save_formats:
+      - png
+    style: whitegrid
+
+    # Размеры графиков
+    figure_sizes:
+      default: [12, 8]
+      pie_chart: [12, 8]
+      histogram: [12, 8]
+      bar_plot: [14, 10]
+      word_cloud: [14, 10]

@@ -5,24 +5,19 @@ import os
 import sys
 import logging
 import hydra
-from omegaconf import DictConfig, OmegaConf
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pathlib import Path
+from omegaconf import DictConfig
 
 # Добавляем родительскую директорию в путь для импорта модулей
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Импортируем модули для анализа
-from utils.parser import parse_anglicisms, clean_wiki_markup
-from utils.analyzer import analyze_anglicisms, clean_anglicisms, advanced_analysis, compare_languages, \
-    analyze_letter_patterns
+from utils.parser import parse_anglicisms
+from utils.analyzer import analyze_anglicisms, clean_anglicisms, advanced_analysis
 from utils.visualizer import visualize_anglicisms
 from utils.io_utils import save_anglicisms, setup_directory_structure
 
 
-@hydra.main(version_base=None, config_path="../configs/parse_anglicism/analysis", config_name="main")
+@hydra.main(version_base=None, config_path="../configs/parse_anglicism", config_name="main")
 def main(cfg: DictConfig):
     """
     Основная функция для анализа англицизмов с использованием конфигурации Hydra.
@@ -30,109 +25,105 @@ def main(cfg: DictConfig):
     Args:
         cfg (DictConfig): Конфигурация Hydra
     """
-    # Настройка путей
+    # Настройка путей с абсолютными значениями
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     paths = {
-        "data_dir": "data",
-        "input_dir": "data/inputs",
-        "output_dir": "data/outputs",
-        "logs_dir": "logs",
-        "visualization_dir": "data/outputs/visualization"
+        "data_dir": os.path.join(base_dir, "data"),
+        "output_dir": os.path.join(base_dir, "data"),
+        "logs_dir": os.path.join(base_dir, "logs"),
+        "visualization_dir": os.path.join(base_dir, "data/visualization")
     }
 
     # Создание структуры директорий
     setup_directory_structure(paths)
 
-    # Настройка логирования ПОСЛЕ создания структуры директорий
+    # Создаем директорию для логов, если её нет
+    if not os.path.exists(paths["logs_dir"]):
+        os.makedirs(paths["logs_dir"])
+
+    # Настройка логирования
     log_file = os.path.join(paths["logs_dir"], "parse_anglicism.log")
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s][%(name)s][%(levelname)s] - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_file, encoding="utf-8")
-        ]
+    # Настраиваем логирование
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    # Очищаем все обработчики
+    while root_logger.handlers:
+        root_logger.handlers.pop()
+
+    # Создаем новые обработчики
+    file_handler = logging.FileHandler(log_file, encoding="utf-8", mode="w")
+    console_handler = logging.StreamHandler()
+
+    # Форматирование
+    formatter = logging.Formatter(
+        "[%(asctime)s][%(name)s][%(levelname)s] - %(message)s",
+        "%Y-%m-%d %H:%M:%S"
     )
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    # Добавляем обработчики
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
 
     logger = logging.getLogger(__name__)
-
     logger.info("Запуск анализа англицизмов")
-    logger.info(f"Конфигурация: {OmegaConf.to_yaml(cfg)}")
 
     # Путь к файлу с англицизмами
-    input_file = os.path.join(paths["input_dir"], "angl.txt")
+    input_file = os.path.join(paths["data_dir"], "input.txt")
 
     # Проверка наличия входного файла
     if not os.path.exists(input_file):
         logger.error(f"Файл с англицизмами не найден: {input_file}")
+        return
 
     # Парсинг англицизмов
-    logger.info("Парсинг англицизмов из файла...")
-    anglicisms_dict = parse_anglicisms(input_file, cfg)
+    logger.info(f"Чтение файла: {input_file}")
+    anglicisms_dict = parse_anglicisms(input_file, cfg.analysis if hasattr(cfg, "analysis") else None)
 
     if not anglicisms_dict["all_anglicisms"]:
         logger.error("Не удалось найти англицизмы в файле.")
         return
 
     # Базовый анализ данных
-    logger.info("=== БАЗОВЫЙ АНАЛИЗ ===")
+    logger.info("Выполнение базового анализа")
     df = analyze_anglicisms(anglicisms_dict)
 
     # Очистка и нормализация данных
-    logger.info("=== ОЧИСТКА ДАННЫХ ===")
-    clean_df = clean_anglicisms(df, cfg)
+    logger.info("Очистка и нормализация данных")
+    clean_df = clean_anglicisms(df, cfg.analysis if hasattr(cfg, "analysis") else None)
 
     # Сохранение обработанных англицизмов
-    output_file = os.path.join(paths["output_dir"], "clean_anglicisms.txt")
-    excel_output = os.path.join(paths["output_dir"], "anglicisms_analysis.xlsx")
-    save_anglicisms(clean_df, output_file, excel_output)
+    output_file = os.path.join(paths["data_dir"], "output.txt")
+    csv_output = os.path.join(paths["data_dir"], "output.csv")
+    save_anglicisms(clean_df, output_file, csv_output)
+
+    # Логгируем информацию о сохранении файлов
+    logger.info(f"Сохранен список англицизмов: {output_file}")
+    logger.info(f"Сохранен CSV файл с анализом: {csv_output}")
 
     # Продолжение анализа только если задано в конфигурации
-    if cfg.perform_advanced:
+    if hasattr(cfg, "analysis") and hasattr(cfg.analysis, "perform_advanced") and cfg.analysis.perform_advanced:
         # Расширенный анализ данных
-        logger.info("=== РАСШИРЕННЫЙ АНАЛИЗ ===")
-        analysis_results = advanced_analysis(clean_df, cfg)
+        logger.info("Выполнение расширенного анализа")
+        advanced_analysis(clean_df, cfg.analysis)
 
-    # Анализ паттернов букв если задано в конфигурации
-    if cfg.analyze_patterns:
-        logger.info("=== АНАЛИЗ ПАТТЕРНОВ БУКВ ===")
-        pattern_results = analyze_letter_patterns(clean_df, cfg)
+        # Визуализация данных
+        logger.info("Создание визуализаций")
+        visualize_anglicisms(clean_df, paths["visualization_dir"],
+                             cfg.visualization if hasattr(cfg, "visualization") else None)
+        logger.info(f"Визуализации сохранены в: {paths['visualization_dir']}")
 
-    # Сравнительный анализ языков если задано в конфигурации
-    if cfg.compare_languages:
-        logger.info("=== СРАВНИТЕЛЬНЫЙ АНАЛИЗ ЯЗЫКОВ ===")
-        comparison_df = compare_languages(clean_df, cfg.top_n_languages, cfg)
-
-    # Визуализация данных
-    logger.info("=== СОЗДАНИЕ ВИЗУАЛИЗАЦИЙ ===")
-
-    # Загрузка конфигурации визуализации
-    visualization_config_path = "../configs/parse_anglicism/visualization/main.yaml"
-    if os.path.exists(visualization_config_path):
-        try:
-            viz_cfg = OmegaConf.load(visualization_config_path)
-            logger.info(f"Загружена конфигурация визуализации: {visualization_config_path}")
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке конфигурации визуализации: {e}")
-            viz_cfg = None
-    else:
-        logger.warning(f"Файл конфигурации визуализации не найден: {visualization_config_path}")
-        viz_cfg = None
-
-    # Создаем визуализации
-    visualization_dir = paths["visualization_dir"]
-    visualize_anglicisms(clean_df, visualization_dir, viz_cfg)
-
-    # Вывод примеров англицизмов
-    logger.info("\nПримеры англицизмов:")
-    for word in clean_df['word'].head(10).tolist():
-        logger.info(f"  {word}")
-
-    logger.info("Анализ англицизмов завершен успешно")
+    logger.info("Анализ англицизмов успешно завершен")
     return clean_df
 
 
 if __name__ == "__main__":
+    # Настраиваем переменные окружения для Hydra
+    os.environ["HYDRA_FULL_ERROR"] = "1"
+    os.environ["HYDRA_LOGGING.LEVEL"] = "WARN"  # Уменьшаем вывод логов Hydra
+
     # Запуск через Hydra
     main()

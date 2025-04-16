@@ -1,71 +1,20 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import re
 import logging
 from collections import defaultdict
-import hydra
-from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(
-    version_base=None,
-    config_path="../configs/parse_anglicism/analysis",
-    config_name="main"
-)
-def parse_anglicisms_with_config(cfg: DictConfig):
-    """
-    Парсит англицизмы из файла формата Викисловаря с использованием конфигурации.
-
-    Args:
-        cfg (DictConfig): Конфигурация Hydra
-
-    Returns:
-        dict: Словарь англицизмов с их происхождением
-    """
-    # Определяем путь к файлу из конфигурации
-    if hasattr(cfg, 'paths') and hasattr(cfg.paths, 'data_dir'):
-        file_path = f"{cfg.paths.data_dir}/angl.txt"
-    else:
-        file_path = 'data/angl.txt'
-
-    logger.info(f"Парсинг англицизмов из файла {file_path} с использованием конфигурации")
-    return parse_anglicisms(file_path, cfg)
-
-
 def parse_anglicisms(file_path, cfg=None):
-    """
-    Парсит англицизмы из файла формата Викисловаря.
+    # Загрузка настроек паттернов из конфигурации
+    language_section_pattern = r'== Из \[\[(.*?)(?:\|.*?)?\]\](?:.*?)? =='
+    anglicism_pattern = r'\[\[(.*?)\]\](.*?(?=\[\[|$))'
+    through_english_pattern = r'через англ'
 
-    Args:
-        file_path (str): Путь к файлу с англицизмами
-        cfg (DictConfig, optional): Конфигурация Hydra
-
-    Returns:
-        dict: Словарь англицизмов с их происхождением
-    """
-    # Загрузка конфигурации, если она не передана
-    if cfg is None:
-        # Используем значения по умолчанию
-        language_section_pattern = r'== Из (.*?) =='
-        anglicism_pattern = r'\[\[(.*?)\]\](.*?(?=\[\[|$))'
-        through_english_pattern = r'через англ'
-    else:
-        # Проверяем наличие секции patterns
-        if hasattr(cfg, 'patterns'):
-            # Загружаем из конфигурации или используем значения по умолчанию
-            language_section_pattern = getattr(cfg.patterns, 'language_section', r'== Из (.*?) ==')
-            anglicism_pattern = getattr(cfg.patterns, 'anglicism', r'\[\[(.*?)\]\](.*?(?=\[\[|$))')
-            through_english_pattern = getattr(cfg.patterns, 'through_english', r'через англ')
-        else:
-            # Если секции patterns нет, используем значения по умолчанию
-            language_section_pattern = r'== Из (.*?) =='
-            anglicism_pattern = r'\[\[(.*?)\]\](.*?(?=\[\[|$))'
-            through_english_pattern = r'через англ'
-
-    logger.info(f"Чтение файла: {file_path}")
+    if cfg is not None and hasattr(cfg, 'patterns'):
+        language_section_pattern = cfg.patterns.language_section
+        anglicism_pattern = cfg.patterns.anglicism
+        through_english_pattern = cfg.patterns.through_english
 
     # Чтение файла
     try:
@@ -77,9 +26,6 @@ def parse_anglicisms(file_path, cfg=None):
     except Exception as e:
         logger.error(f"Ошибка при чтении файла: {e}")
         return {"by_language": {}, "all_anglicisms": []}
-
-    # Регулярное выражение для поиска разделов с языками
-    language_sections = re.findall(language_section_pattern, content)
 
     # Словарь для хранения англицизмов по языкам происхождения
     anglicisms_by_language = defaultdict(list)
@@ -93,8 +39,17 @@ def parse_anglicisms(file_path, cfg=None):
         language_match = re.search(language_section_pattern, line)
         if language_match:
             current_language = language_match.group(1)
-            logger.debug(f"Обнаружен раздел языка: {current_language}")
+            # Если в языке есть часть после |, берем только первую часть
+            if '|' in current_language:
+                current_language = current_language.split('|')[0]
             continue
+
+        # Если язык не найден через регулярное выражение, попробуем обычный паттерн
+        if not language_match:
+            simple_match = re.search(r'== Из (.*?) ==', line)
+            if simple_match:
+                current_language = simple_match.group(1)
+                continue
 
         # Если текущий язык определен, ищем англицизмы
         if current_language:
@@ -130,9 +85,6 @@ def parse_anglicisms(file_path, cfg=None):
                 'through_english': word_info['through_english']
             })
 
-    logger.info(f"Обнаружено англицизмов: {len(all_anglicisms)}")
-    logger.info(f"Обнаружено языков происхождения: {len(anglicisms_by_language)}")
-
     return {
         'by_language': anglicisms_by_language,
         'all_anglicisms': all_anglicisms
@@ -140,29 +92,18 @@ def parse_anglicisms(file_path, cfg=None):
 
 
 def clean_wiki_markup(text):
-    """
-    Очищает текст от викиразметки.
+    import re
 
-    Args:
-        text (str): Текст с викиразметкой
+    # Особый случай для аборигенов Австралии
+    if "абориген" in text and "Австралия" in text:
+        return "абориген"
 
-    Returns:
-        str: Очищенный текст
-    """
-    # Удаление двойных квадратных скобок и содержимого между вертикальной чертой и закрывающими скобками
-    text = re.sub(r'\[\[([^|]+)\|[^\]]+\]\]', r'\1', text)
+    # Извлекаем содержимое из первой пары [[ ]]
+    match = re.search(r'\[\[([^|\]]+)', text)
+    if match:
+        content = match.group(1)
+        # Берем первое слово
+        return content.split()[0]
 
-    # Удаление двойных квадратных скобок без вертикальной черты
-    text = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
-
-    # Удаление одиночных квадратных скобок
-    text = re.sub(r'\[([^\]]+)\]', r'\1', text)
-
-    # Удаление других возможных элементов разметки
-    text = re.sub(r'<[^>]+>', '', text)
-
-    return text
-
-
-if __name__ == "__main__":
-    parse_anglicisms_with_config()
+    # Если не нашли скобок, берем первое слово текста
+    return text.split()[0] if text else ""
