@@ -8,7 +8,7 @@ import nltk
 
 def main():
     # Пути к файлам
-    anglicisms_file = "assets/clean_anglicism.txt"
+    anglicisms_file = "assets/clean_anglicism_2.txt"
     stopwords_file = "assets/stopwords.txt"
     texts_file = "assets/texts.csv"
     output_file = "assets/anglicisms_dataset.csv"

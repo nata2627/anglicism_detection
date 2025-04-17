@@ -1,52 +1,64 @@
 import os
-import sys
-import hydra
-from omegaconf import DictConfig
+import glob
+import pandas as pd
 from pathlib import Path
 
-# Добавляем родительскую директорию в путь для импорта модулей
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Импортируем модули для предобработки
-from clear_dataset.utils.preprocessor import TextPreprocessor
+def main() -> None:
+    # Определяем пути
+    data_dir = 'assets'
+    output_dir = 'assets'
+    output_file = 'texts.csv'
+    file_pattern = 'rbc_articles_*.csv'
+    text_column = 'text'
 
+    # Находим входные файлы
+    input_files = glob.glob(os.path.join(data_dir, file_pattern))
 
-@hydra.main(
-    version_base=None,
-    config_path="../configs/clear_dataset",
-    config_name="main"
-)
-def main(config: DictConfig) -> None:
-    """
-    Основная функция для запуска предобработки текстов.
+    if not input_files:
+        print(f"Не найдено файлов по шаблону: {os.path.join(data_dir, file_pattern)}")
+        return
 
-    Создает экземпляр предобработчика TextPreprocessor с заданной
-    конфигурацией и запускает процесс очистки и предобработки текстов.
-    Сохраняет результаты в выходной файл.
+    print(f"Найдено {len(input_files)} файлов для обработки")
 
-    Args:
-        config: Конфигурационный объект Hydra, содержащий все
-               необходимые настройки для работы предобработчика
+    # Загружаем и объединяем данные из всех файлов
+    all_data = []
+    for file_path in input_files:
+        try:
+            print(f"Загрузка данных из файла: {file_path}")
+            df = pd.read_csv(file_path, encoding='utf-8')
 
-    Returns:
-        None
-    """
-    # Инициализация предобработчика с загруженной конфигурацией
-    preprocessor = TextPreprocessor(config)
+            # Проверяем наличие необходимой колонки с текстом
+            if text_column not in df.columns:
+                print(f"В файле {file_path} отсутствует колонка '{text_column}'")
+                continue
 
-    # Запуск процесса предобработки текстов
-    processed_df = preprocessor.preprocess()
+            # Оставляем только нужную колонку и переименовываем
+            df = df[[text_column]].rename(columns={text_column: 'original_text'})
+            all_data.append(df)
+            print(f"Загружено {len(df)} строк из файла {file_path}")
+        except Exception as e:
+            print(f"Ошибка при загрузке файла {file_path}: {str(e)}")
 
-    # Вывод результатов предобработки
-    if processed_df is not None:
-        print(f"Обработано текстов: {len(processed_df)}")
-        print(f"Результаты сохранены в: {os.path.join(config.paths.output_dir, config.output.file_name)}")
+    if not all_data:
+        print("Не удалось загрузить данные ни из одного файла")
+        return
+
+    # Объединяем все данные
+    result_df = pd.concat(all_data, ignore_index=True)
+    print(f"Всего загружено {len(result_df)} строк из {len(all_data)} файлов")
+
+    # Сохраняем результаты
+    try:
+        output_path = os.path.join(output_dir, output_file)
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        result_df.to_csv(output_path, index=False, encoding='utf-8')
+        print(f"Результаты сохранены в файл: {output_path}")
+        print(f"Сохранено {len(result_df)} текстов")
+    except Exception as e:
+        print(f"Ошибка при сохранении результатов: {str(e)}")
 
 
 if __name__ == "__main__":
-    # Настраиваем переменные окружения для Hydra
-    os.environ["HYDRA_FULL_ERROR"] = "1"
-    os.environ["HYDRA_LOGGING.LEVEL"] = "WARN"  # Уменьшаем вывод логов Hydra
-
-    # Запуск через Hydra
     main()

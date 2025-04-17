@@ -4,57 +4,19 @@ from bs4 import BeautifulSoup as bs
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
-from .logger import CustomLogger
 
 
 class RBCParser:
-    """
-    Класс для парсинга статей с сайта RBC.ru.
-
-    Осуществляет поиск и извлечение статей по заданным параметрам,
-    включая текст статей, их обзоры и метаданные.
-
-    Attributes:
-        config: Конфигурационный объект с настройками парсера
-        logger: Объект для логирования процесса работы парсера
-    """
-
     def __init__(self, config) -> None:
-        """
-        Инициализация парсера RBC.
-
-        Args:
-            config: Объект конфигурации, содержащий настройки парсера
-        """
         self.config = config
-        self.logger = CustomLogger(config)
 
     def _get_url(self, param_dict: Dict[str, str]) -> str:
-        """
-        Формирует URL для поискового запроса на основе переданных параметров.
-
-        Args:
-            param_dict: Словарь параметров запроса (query, project, category и т.д.)
-
-        Returns:
-            str: Сформированный URL для поискового запроса
-        """
         url = 'https://www.rbc.ru/search/ajax/?' + \
               '&'.join(f"{k}={v}" for k, v in param_dict.items())
-        self.logger.debug(f"Сгенерирован URL: {url}")
+        print(f"Сгенерирован URL: {url}")
         return url
 
     def _get_article_data(self, url: str) -> Tuple[Optional[str], Optional[str]]:
-        """
-        Извлекает содержимое статьи по указанному URL.
-
-        Args:
-            url: URL статьи для парсинга
-
-        Returns:
-            Tuple[Optional[str], Optional[str]]: Кортеж, содержащий обзор и полный текст статьи.
-            В случае ошибки возвращает (None, None)
-        """
         try:
             response = rq.get(url)
             soup = bs(response.text, features="lxml")
@@ -69,26 +31,17 @@ class RBCParser:
 
             return overview, text
         except Exception as e:
-            self.logger.error(f"Ошибка при парсинге статьи {url}: {str(e)}")
+            print(f"Ошибка при парсинге статьи {url}: {str(e)}")
             return None, None
 
     def _get_search_table(self, param_dict: Dict[str, str]) -> pd.DataFrame:
-        """
-        Получает таблицу результатов поиска для заданных параметров.
-
-        Args:
-            param_dict: Словарь параметров поискового запроса
-
-        Returns:
-            pd.DataFrame: DataFrame с результатами поиска. Пустой DataFrame в случае ошибки.
-        """
         try:
             url = self._get_url(param_dict)
             response = rq.get(url)
             search_table = pd.DataFrame(response.json()['items'])
 
             if not search_table.empty and self.config.parser.include_text:
-                self.logger.info(
+                print(
                     f"Найдено {len(search_table)} статей на странице {param_dict['page']}"
                 )
                 # Получаем данные для каждой статьи
@@ -110,18 +63,10 @@ class RBCParser:
 
             return search_table
         except Exception as e:
-            self.logger.error(f"Ошибка при получении таблицы поиска: {str(e)}")
+            print(f"Ошибка при получении таблицы поиска: {str(e)}")
             return pd.DataFrame()
 
     def parse_articles(self) -> pd.DataFrame:
-        """
-        Основной метод для парсинга статей. Собирает все статьи согласно
-        заданным в конфигурации параметрам.
-
-        Returns:
-            pd.DataFrame: DataFrame со всеми собранными статьями и их данными.
-            В случае ошибки возвращает пустой DataFrame.
-        """
         param_dict = {
             'query': self.config.parser.query,
             'project': self.config.parser.project,
@@ -136,7 +81,7 @@ class RBCParser:
             'page': str(self.config.parser.initial_page)
         }
 
-        self.logger.info(f"Начало парсинга с параметрами: {param_dict}")
+        print(f"Начало парсинга с параметрами: {param_dict}")
 
         results = []
         page = self.config.parser.initial_page
@@ -144,7 +89,7 @@ class RBCParser:
         while True:
             # Проверяем ограничение по страницам
             if page >= self.config.parser.max_pages:
-                self.logger.info(
+                print(
                     f"Достигнуто максимальное количество страниц "
                     f"({self.config.parser.max_pages})"
                 )
@@ -154,11 +99,11 @@ class RBCParser:
             result = self._get_search_table(param_dict)
 
             if result.empty:
-                self.logger.info(f"Больше результатов не найдено после страницы {page}")
+                print(f"Больше результатов не найдено после страницы {page}")
                 break
 
             results.append(result)
-            self.logger.info(f"Успешно обработана страница {page}")
+            print(f"Успешно обработана страница {page}")
             page += 1
 
         if results:
@@ -168,15 +113,6 @@ class RBCParser:
         return pd.DataFrame()
 
     def _save_results(self, df: pd.DataFrame) -> None:
-        """
-        Сохраняет результаты парсинга в CSV файл.
-
-        Args:
-            df: DataFrame с результатами парсинга
-
-        Raises:
-            Exception: В случае ошибки при сохранении результатов
-        """
         try:
             data_dir = Path(self.config.paths.data_dir)
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -191,8 +127,8 @@ class RBCParser:
             filepath = data_dir / filename
 
             df.to_csv(filepath, index=False, encoding=self.config.output.encoding)
-            self.logger.info(f"Результаты сохранены в {filepath}")
-            self.logger.info(f"Всего обработано статей: {len(df)}")
-            self.logger.info(f"Абсолютный путь к сохраненному файлу: {filepath.absolute()}")
+            print(f"Результаты сохранены в {filepath}")
+            print(f"Всего обработано статей: {len(df)}")
+            print(f"Абсолютный путь к сохраненному файлу: {filepath.absolute()}")
         except Exception as e:
-            self.logger.error(f"Ошибка при сохранении результатов: {str(e)}")
+            print(f"Ошибка при сохранении результатов: {str(e)}")

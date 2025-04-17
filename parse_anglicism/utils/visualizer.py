@@ -1,26 +1,23 @@
 import os
-import logging
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
 
-logger = logging.getLogger(__name__)
 
-
-def visualize_anglicisms(df, output_dir="visualization", cfg=None):
+def visualize_anglicisms(df, output_dir="visualization"):
     # Создаем директорию для сохранения визуализаций, если её нет
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    # Настройки по умолчанию
+    # Настройки визуализации
     dpi = 300
     font_family = 'DejaVu Sans'
     save_formats = ['png']
     style = "whitegrid"
 
-    # Размеры графиков по умолчанию
+    # Размеры графиков
     figure_sizes = {
         "default": (12, 8),
         "pie_chart": (12, 8),
@@ -28,24 +25,6 @@ def visualize_anglicisms(df, output_dir="visualization", cfg=None):
         "bar_plot": (14, 10),
         "word_cloud": (14, 10)
     }
-
-    # Загрузка настроек из конфигурации, если она передана
-    if cfg is not None:
-        # Основные настройки
-        if hasattr(cfg, 'dpi'):
-            dpi = cfg.dpi
-        if hasattr(cfg, 'font_family'):
-            font_family = cfg.font_family
-        if hasattr(cfg, 'save_formats'):
-            save_formats = cfg.save_formats
-        if hasattr(cfg, 'style'):
-            style = cfg.style
-
-        # Размеры графиков
-        if hasattr(cfg, 'figure_sizes'):
-            for key, value in cfg.figure_sizes.items():
-                if key in figure_sizes:
-                    figure_sizes[key] = tuple(value)
 
     # Настраиваем поддержку русского языка в matplotlib
     plt.rcParams['font.family'] = font_family
@@ -64,7 +43,7 @@ def visualize_anglicisms(df, output_dir="visualization", cfg=None):
 
     # Проверяем наличие необходимых колонок в DataFrame
     if 'word' not in df.columns:
-        logger.error("В DataFrame отсутствует колонка 'word'")
+        print("В DataFrame отсутствует колонка 'word'")
         return
 
     # Убедимся, что у нас есть колонка word_length
@@ -134,8 +113,8 @@ def visualize_anglicisms(df, output_dir="visualization", cfg=None):
         plt.title('Облако слов англицизмов', fontsize=16, pad=20)
         save_figure("anglicisms_wordcloud", tight_layout=False)
     except Exception as e:
-        logger.error(f"Ошибка при создании облака слов: {e}")
+        print(f"Ошибка при создании облака слов: {e}")
     finally:
         plt.close()
 
-    logger.info(f"Визуализации сохранены в директорию: {output_dir}")
+    print(f"Визуализации сохранены в директорию: {output_dir}")

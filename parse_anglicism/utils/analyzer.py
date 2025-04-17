@@ -1,10 +1,7 @@
 import pandas as pd
-import logging
 from collections import Counter
 
 from utils.parser import clean_wiki_markup
-
-logger = logging.getLogger(__name__)
 
 
 def analyze_anglicisms(anglicisms_dict):
@@ -23,20 +20,14 @@ def analyze_anglicisms(anglicisms_dict):
     return df
 
 
-def clean_anglicisms(df, cfg=None):
+def clean_anglicisms(df):
     # Копия DataFrame для безопасного изменения
     clean_df = df.copy()
 
-    # Настройки по умолчанию
+    # Настройки обработки
     lowercase = True
     remove_special_chars = True
     remove_duplicates = True
-
-    # Загрузка настроек из конфигурации, если она передана
-    if cfg is not None and hasattr(cfg, 'cleaning'):
-        lowercase = cfg.cleaning.lowercase
-        remove_special_chars = cfg.cleaning.remove_special_chars
-        remove_duplicates = cfg.cleaning.remove_duplicates
 
     # Приведение всех слов к нижнему регистру
     if lowercase:
@@ -59,20 +50,13 @@ def clean_anglicisms(df, cfg=None):
     return clean_df
 
 
-def advanced_analysis(df, cfg=None):
+def advanced_analysis(df):
     # Создаем словарь для хранения результатов анализа
     analysis_results = {}
 
     # Настройки категорий длины слов
     bins = [0, 4, 8, 12, 100]
     labels = ['Короткие (1-4)', 'Средние (5-8)', 'Длинные (9-12)', 'Очень длинные (>12)']
-
-    # Загрузка настроек из конфигурации, если она передана
-    if cfg is not None and hasattr(cfg, 'length_categories'):
-        if hasattr(cfg.length_categories, 'bins'):
-            bins = cfg.length_categories.bins
-        if hasattr(cfg.length_categories, 'labels'):
-            labels = cfg.length_categories.labels
 
     # 1. Анализ длины слов по языкам
     length_by_lang = df.groupby('origin_language')['word_length'].agg(['mean', 'median', 'min', 'max', 'count'])

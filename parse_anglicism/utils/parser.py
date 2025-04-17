@@ -1,30 +1,22 @@
 import re
-import logging
 from collections import defaultdict
 
-logger = logging.getLogger(__name__)
 
-
-def parse_anglicisms(file_path, cfg=None):
-    # Загрузка настроек паттернов из конфигурации
+def parse_anglicisms(file_path):
+    # Настройки паттернов
     language_section_pattern = r'== Из \[\[(.*?)(?:\|.*?)?\]\](?:.*?)? =='
     anglicism_pattern = r'\[\[(.*?)\]\](.*?(?=\[\[|$))'
     through_english_pattern = r'через англ'
-
-    if cfg is not None and hasattr(cfg, 'patterns'):
-        language_section_pattern = cfg.patterns.language_section
-        anglicism_pattern = cfg.patterns.anglicism
-        through_english_pattern = cfg.patterns.through_english
 
     # Чтение файла
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
             content = file.read()
     except FileNotFoundError:
-        logger.error(f"Файл не найден: {file_path}")
+        print(f"Файл не найден: {file_path}")
         return {"by_language": {}, "all_anglicisms": []}
     except Exception as e:
-        logger.error(f"Ошибка при чтении файла: {e}")
+        print(f"Ошибка при чтении файла: {e}")
         return {"by_language": {}, "all_anglicisms": []}
 
     # Словарь для хранения англицизмов по языкам происхождения
@@ -92,8 +84,6 @@ def parse_anglicisms(file_path, cfg=None):
 
 
 def clean_wiki_markup(text):
-    import re
-
     # Особый случай для аборигенов Австралии
     if "абориген" in text and "Австралия" in text:
         return "абориген"
