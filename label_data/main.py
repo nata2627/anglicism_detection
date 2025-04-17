@@ -10,6 +10,7 @@ def main():
     # Пути к файлам
     anglicisms_file = "assets/clean_anglicism_2.txt"
     stopwords_file = "assets/stopwords.txt"
+    exceptions_file = "assets/exceptions.txt"  # Новый файл с исключениями
     texts_file = "assets/texts.csv"
     output_file = "assets/anglicisms_dataset.csv"
 
@@ -45,6 +46,23 @@ def main():
 
     # Создаем множество из стемов стоп-слов для быстрой проверки
     stopwords_stems = set(stemmer.stem(word) for word in stopwords)
+
+    # Загрузка исключений
+    print(f"Проверка наличия файла исключений {exceptions_file}...")
+    exceptions = []
+    exceptions_stems = set()
+    if os.path.exists(exceptions_file):
+        try:
+            with open(exceptions_file, 'r', encoding='utf-8') as f:
+                exceptions = [line.strip().lower() for line in f]
+            # Применяем стемминг к исключениям
+            exceptions_stems = set(stemmer.stem(word) for word in exceptions)
+            print(f"Загружено {len(exceptions)} слов-исключений")
+        except Exception as e:
+            print(f"Ошибка при загрузке исключений: {e}")
+            print("Продолжаем без исключений")
+    else:
+        print(f"Файл исключений не найден. Продолжаем без списка исключений.")
 
     print(f"Загрузка англицизмов из {anglicisms_file}...")
     # Загрузка списка англицизмов
@@ -182,8 +200,11 @@ def main():
                 # Проверяем, что:
                 # 1. Основа слова есть в списке основ англицизмов
                 # 2. Основа слова НЕ находится в списке стоп-слов
-                # 3. Слово НЕ находится внутри кавычек (не является частью имени собственного)
+                # 3. Основа слова НЕ находится в списке исключений
+                # 4. Слово НЕ находится внутри кавычек (не является частью имени собственного)
                 if (word_stem in anglicisms_base_forms and
+                        word_stem not in stopwords_stems and
+                        word_stem not in exceptions_stems and
                         word_stem not in quoted_stems):
 
                     # Дополнительная проверка, не является ли слово частью текста в кавычках
@@ -250,6 +271,10 @@ def main():
     # Выводим статистику
     texts_with_anglicisms = sum(1 for anglicisms_json in output_df['anglicisms'] if anglicisms_json != '[]')
     print(f"Обработка завершена. Найдены англицизмы в {texts_with_anglicisms} из {len(output_df)} текстов.")
+
+    # Выводим информацию об использовании исключений
+    if exceptions_stems:
+        print(f"Во время обработки использовался список исключений ({len(exceptions_stems)} слов).")
 
     # Выводим примеры для проверки
     print("\nПримеры найденных англицизмов:")
