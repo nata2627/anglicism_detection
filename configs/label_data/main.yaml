@@ -1,0 +1,43 @@
+defaults:
+  - _self_
+
+paths:
+  log_dir: "logs"
+  data_dir: "assets"
+  output_dir: "assets/labeled_data"
+  analysis_dir: "assets/analysis_results"
+
+labeler:
+  anglicisms_file: "clean_anglicism.txt"
+  texts_file: "texts.csv"
+  tokenized_column: "tokenized_text"
+  output_prefix: "labeled"
+
+  # Настройки спецификаторов
+  exclude_proper_nouns: true
+  exclude_country_names: true
+
+  # Параметры для визуализации
+  visualization:
+    enabled: true
+    dpi: 300
+    save_formats:
+      - png
+    style: whitegrid
+
+    # Размеры графиков
+    figure_sizes:
+      bar_plot: [12, 8]
+      histogram: [12, 8]
+      distribution: [12, 8]
+
+logging:
+  log_level: INFO
+  format: "[%(asctime)s][%(name)s][%(levelname)s] - %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
+
+output:
+  encoding: "utf-8"
+  save_formats:
+    - csv
+    - json

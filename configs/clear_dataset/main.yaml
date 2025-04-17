@@ -12,6 +12,11 @@ processor:
   advanced_preprocessing: true  # использовать продвинутую обработку (лемматизация и т.д.)
   min_token_length: 3  # минимальная длина токена для сохранения
   max_token_length: 25  # максимальная длина токена для сохранения
+  remove_named_entities: true  # удалять именованные сущности (имена, локации, организации)
+  ner_types_to_remove:  # типы сущностей для удаления
+    - PER  # персоны
+    - LOC  # локации
+    - ORG  # организации
 
 logging:
   log_level: INFO
