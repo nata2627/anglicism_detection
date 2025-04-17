@@ -16,10 +16,10 @@ analysis:
 
   # Настройки путей
   paths:
-    data_dir: "data"
-    output_dir: "outputs"
+    data_dir: "assets"
+    output_dir: ""
     logs_dir: "logs"
-    visualization_dir: "outputs/visualization"
+    visualization_dir: "visualization"
 
 visualization:
   # Общие настройки визуализации

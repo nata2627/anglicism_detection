@@ -26,12 +26,11 @@ def main(cfg: DictConfig):
         cfg (DictConfig): Конфигурация Hydra
     """
     # Настройка путей с абсолютными значениями
-    base_dir = os.path.dirname(os.path.abspath(__file__))
     paths = {
-        "data_dir": os.path.join(base_dir, "data"),
-        "output_dir": os.path.join(base_dir, "data"),
-        "logs_dir": os.path.join(base_dir, "logs"),
-        "visualization_dir": os.path.join(base_dir, "data/visualization")
+        "data_dir": "assets",
+        "output_dir": "assets",
+        "logs_dir": "logs",
+        "visualization_dir": "assets/visualization"
     }
 
     # Создание структуры директорий
@@ -72,7 +71,7 @@ def main(cfg: DictConfig):
     logger.info("Запуск анализа англицизмов")
 
     # Путь к файлу с англицизмами
-    input_file = os.path.join(paths["data_dir"], "input.txt")
+    input_file = os.path.join(paths["data_dir"], "angl.txt")
 
     # Проверка наличия входного файла
     if not os.path.exists(input_file):
@@ -96,8 +95,8 @@ def main(cfg: DictConfig):
     clean_df = clean_anglicisms(df, cfg.analysis if hasattr(cfg, "analysis") else None)
 
     # Сохранение обработанных англицизмов
-    output_file = os.path.join(paths["data_dir"], "output.txt")
-    csv_output = os.path.join(paths["data_dir"], "output.csv")
+    output_file = os.path.join(paths["data_dir"], "clean_anglicism.txt")
+    csv_output = os.path.join(paths["data_dir"], "anglicism_stats.csv")
     save_anglicisms(clean_df, output_file, csv_output)
 
     # Логгируем информацию о сохранении файлов

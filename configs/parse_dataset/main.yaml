@@ -3,7 +3,7 @@ defaults:
 
 paths:
   log_dir: "logs"
-  data_dir: "data"
+  data_dir: "assets"
 
 parser:
   query: "РБК"
