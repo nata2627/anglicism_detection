@@ -1,9 +1,10 @@
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 import requests as rq
 from bs4 import BeautifulSoup as bs
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from tqdm import tqdm
 from .logger import CustomLogger
 
 
@@ -41,7 +42,7 @@ class RBCParser:
         """
         url = 'https://www.rbc.ru/search/ajax/?' + \
               '&'.join(f"{k}={v}" for k, v in param_dict.items())
-        self.logger.debug(f"Сгенерирован URL: {url}")
+        self.logger.info(f"Сгенерирован URL: {url}")
         return url
 
     def _get_article_data(self, url: str) -> Tuple[Optional[str], Optional[str]]:
@@ -142,39 +143,36 @@ class RBCParser:
             self.logger.error(f"Ошибка при получении таблицы поиска: {str(e)}")
             return pd.DataFrame()
 
-    def parse_articles(self) -> pd.DataFrame:
+    def _parse_single_date(self, date_str: str) -> pd.DataFrame:
         """
-        Основной метод для парсинга статей. Собирает все статьи согласно
-        заданным в конфигурации параметрам.
+        Парсит статьи за конкретную дату.
+
+        Args:
+            date_str: Дата в формате 'YYYY-MM-DD'
 
         Returns:
-            pd.DataFrame: DataFrame со всеми собранными статьями и их данными.
-            В случае ошибки возвращает пустой DataFrame.
+            pd.DataFrame: DataFrame со всеми собранными статьями за указанную дату
         """
         param_dict = {
             'query': self.config.parser.query,
             'project': self.config.parser.project,
             'category': self.config.parser.category,
             'material': self.config.parser.material,
-            'dateFrom': datetime.strptime(
-                self.config.parser.dateFrom, '%Y-%m-%d'
-            ).strftime('%d.%m.%Y'),
-            'dateTo': datetime.strptime(
-                self.config.parser.dateTo, '%Y-%m-%d'
-            ).strftime('%d.%m.%Y'),
-            'page': str(self.config.parser.initial_page)
+            'dateFrom': datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y'),
+            'dateTo': datetime.strptime(date_str, '%Y-%m-%d').strftime('%d.%m.%Y'),
+            'page': '1'  # Начинаем с первой страницы
         }
 
-        self.logger.info(f"Начало парсинга с параметрами: {param_dict}")
+        self.logger.info(f"Начало парсинга для даты {date_str} с параметрами: {param_dict}")
 
         results = []
-        page = self.config.parser.initial_page
+        page = 1
 
         while True:
             # Проверяем ограничение по страницам
-            if page >= self.config.parser.max_pages:
+            if page > self.config.parser.max_pages:
                 self.logger.info(
-                    f"Достигнуто максимальное количество страниц "
+                    f"Достигнуто максимальное количество страниц для даты {date_str} "
                     f"({self.config.parser.max_pages})"
                 )
                 break
@@ -183,25 +181,78 @@ class RBCParser:
             result = self._get_search_table(param_dict)
 
             if result.empty:
-                self.logger.info(f"Больше результатов не найдено после страницы {page}")
+                self.logger.info(f"Больше результатов не найдено для даты {date_str} после страницы {page}")
                 break
 
             results.append(result)
-            self.logger.info(f"Успешно обработана страница {page}")
+            self.logger.info(f"Успешно обработана страница {page} для даты {date_str}")
             page += 1
 
         if results:
-            final_df = pd.concat(results, ignore_index=True)
-            self._save_results(final_df)
-            return final_df
+            return pd.concat(results, ignore_index=True)
         return pd.DataFrame()
 
-    def _save_results(self, df: pd.DataFrame) -> None:
+    def _get_date_range(self) -> List[str]:
+        """
+        Получает список всех дат в заданном диапазоне.
+
+        Returns:
+            List[str]: Список дат в формате 'YYYY-MM-DD'
+        """
+        start_date = datetime.strptime(self.config.parser.dateFrom, '%Y-%m-%d')
+        end_date = datetime.strptime(self.config.parser.dateTo, '%Y-%m-%d')
+
+        date_list = []
+        current_date = start_date
+
+        while current_date <= end_date:
+            date_list.append(current_date.strftime('%Y-%m-%d'))
+            current_date += timedelta(days=1)
+
+        return date_list
+
+    def parse_articles(self) -> pd.DataFrame:
+        """
+        Основной метод для парсинга статей. Собирает статьи отдельно для каждой даты
+        в заданном диапазоне и сохраняет результаты в отдельные файлы.
+
+        Returns:
+            pd.DataFrame: Объединенный DataFrame со всеми собранными статьями.
+            В случае ошибки возвращает пустой DataFrame.
+        """
+        date_range = self._get_date_range()
+        self.logger.info(f"Будет обработано {len(date_range)} дат с {date_range[0]} по {date_range[-1]}")
+
+        all_results = []
+
+        # Используем tqdm для отображения прогресса
+        for date_str in tqdm(date_range, desc="Парсинг по датам"):
+            df = self._parse_single_date(date_str)
+
+            if not df.empty:
+                # Сохраняем результаты для текущей даты
+                self._save_results(df, date_str)
+                all_results.append(df)
+                self.logger.info(f"Обработана дата {date_str}, собрано {len(df)} статей")
+            else:
+                self.logger.info(f"Для даты {date_str} статьи не найдены")
+
+        # Объединяем все результаты в один DataFrame
+        if all_results:
+            final_df = pd.concat(all_results, ignore_index=True)
+            self.logger.info(f"Всего обработано статей: {len(final_df)}")
+            return final_df
+
+        self.logger.warning("Не найдено ни одной статьи за весь период")
+        return pd.DataFrame()
+
+    def _save_results(self, df: pd.DataFrame, date_str: str) -> None:
         """
         Сохраняет результаты парсинга в CSV файл.
 
         Args:
             df: DataFrame с результатами парсинга
+            date_str: Дата в формате 'YYYY-MM-DD', для которой сохраняются результаты
 
         Raises:
             Exception: В случае ошибки при сохранении результатов
@@ -213,8 +264,7 @@ class RBCParser:
             # Формируем информативное имя файла
             filename = (
                 f"{self.config.output.file_prefix}_"
-                f"{self.config.parser.dateFrom}_to_"
-                f"{self.config.parser.dateTo}_pages_"
+                f"{date_str}_pages_"
                 f"{self.config.parser.max_pages}.csv"
             )
             filepath = data_dir / filename
@@ -233,8 +283,7 @@ class RBCParser:
 
             # Сохраняем файл
             df.to_csv(filepath, index=False, encoding=self.config.output.encoding)
-            self.logger.info(f"Результаты сохранены в {filepath}")
-            self.logger.info(f"Всего обработано статей: {len(df)}")
+            self.logger.info(f"Результаты для даты {date_str} сохранены в {filepath}")
             self.logger.info(f"Абсолютный путь к сохраненному файлу: {filepath.absolute()}")
         except Exception as e:
-            self.logger.error(f"Ошибка при сохранении результатов: {str(e)}")
+            self.logger.error(f"Ошибка при сохранении результатов для даты {date_str}: {str(e)}")

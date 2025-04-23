@@ -16,7 +16,7 @@ def main(config: DictConfig) -> None:
     articles_df = parser.parse_articles()
 
     # Вывод результатов парсинга
-    print(f"Собрано статей: {len(articles_df)}")
+    print(f"Общее количество собранных статей: {len(articles_df)}")
 
 
 if __name__ == "__main__":

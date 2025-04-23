@@ -3,17 +3,17 @@ defaults:
 
 paths:
   log_dir: "logs"
-  data_dir: "assets"
+  data_dir: "assets/articles"
 
 parser:
   query: "РБК"
   project: "rbcnews"
   category: "TopRbcRu_economics"
   material: ""
-  dateFrom: "2025-02-01"
-  dateTo: "2025-02-02"
+  dateFrom: "2024-04-01"
+  dateTo: "2025-04-01"
   initial_page: 0
-  max_pages: 20
+  max_pages: 100
   include_text: true
 
 logging:
