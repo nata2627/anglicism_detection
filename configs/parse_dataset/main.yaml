@@ -13,7 +13,7 @@ parser:
   dateFrom: "2025-02-01"
   dateTo: "2025-02-02"
   initial_page: 0
-  max_pages: 2
+  max_pages: 20
   include_text: true
 
 logging:
