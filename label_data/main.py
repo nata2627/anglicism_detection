@@ -114,6 +114,20 @@ def main():
         print(f"Доступные столбцы: {df.columns.tolist()}")
         return
 
+    # Функция для разделения текста на предложения
+    def split_text_into_sentences(text):
+        if pd.isna(text) or not isinstance(text, str):
+            return []
+
+        # Регулярное выражение для разделения текста на предложения
+        # Учитываем точки, восклицательные знаки, вопросительные знаки как разделители предложений
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+
+        # Удаляем пустые предложения и предложения только из пробелов
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        return sentences
+
     # Функция для извлечения текста в кавычках
     def extract_quoted_text(text):
         if pd.isna(text) or not isinstance(text, str):
@@ -222,7 +236,7 @@ def main():
 
         return found_anglicisms
 
-    print("Поиск англицизмов в текстах...")
+    print("Разделение текстов на предложения и поиск англицизмов...")
 
     # Проверяем наличие tqdm для прогресс-бара
     try:
@@ -232,34 +246,79 @@ def main():
         use_tqdm = False
         print("Библиотека tqdm не установлена. Будет отображаться простой прогресс.")
 
-    # Применяем функцию к каждому тексту
+    # Создаем множество для отслеживания уникальных предложений
+    unique_sentences = set()
+
+    # Применяем функцию к каждому тексту, разделяя на предложения
     results = []
+    total_sentences = 0
+    duplicate_sentences = 0
 
     if use_tqdm:
         # С прогресс-баром
         for index, row in tqdm(df.iterrows(), total=len(df)):
             text = row['original_text']
-            anglicisms = find_anglicisms(text)
-            results.append({
-                'original_text': text,
-                'anglicisms': anglicisms
-            })
+            sentences = split_text_into_sentences(text)
+            total_sentences += len(sentences)
+
+            for sentence in sentences:
+                # Пропускаем дубликаты предложений
+                if sentence in unique_sentences:
+                    duplicate_sentences += 1
+                    continue
+
+                # Добавляем предложение в множество уникальных
+                unique_sentences.add(sentence)
+
+                # Находим англицизмы в предложении
+                anglicisms = find_anglicisms(sentence)
+
+                # Добавляем результат
+                results.append({
+                    'sentence': sentence,
+                    'anglicisms': anglicisms
+                })
     else:
         # Без прогресс-бара
         total = len(df)
         for index, row in df.iterrows():
             if index % 100 == 0 or index == total - 1:
                 print(f"Обработано {index + 1}/{total} текстов ({((index + 1) / total * 100):.1f}%)")
+
             text = row['original_text']
-            anglicisms = find_anglicisms(text)
-            results.append({
-                'original_text': text,
-                'anglicisms': anglicisms
-            })
+            sentences = split_text_into_sentences(text)
+            total_sentences += len(sentences)
+
+            for sentence in sentences:
+                # Пропускаем дубликаты предложений
+                if sentence in unique_sentences:
+                    duplicate_sentences += 1
+                    continue
+
+                # Добавляем предложение в множество уникальных
+                unique_sentences.add(sentence)
+
+                # Находим англицизмы в предложении
+                anglicisms = find_anglicisms(sentence)
+
+                # Добавляем результат
+                results.append({
+                    'sentence': sentence,
+                    'anglicisms': anglicisms
+                })
 
     # Создаем датасет
     print("Создание итогового датасета...")
     output_df = pd.DataFrame(results)
+
+    # Фильтрация предложений без англицизмов
+    print(f"Всего предложений до фильтрации: {len(output_df)}")
+    print(f"Всего дубликатов предложений пропущено: {duplicate_sentences}")
+
+    # Закомментируем удаление предложений без англицизмов для тестирования
+    output_df = output_df[output_df['anglicisms'].apply(len) > 0]
+
+    print(f"Всего предложений после фильтрации: {len(output_df)}")
 
     # Сохраняем результат
     print(f"Сохранение результата в {output_file}...")
@@ -269,8 +328,11 @@ def main():
     output_df.to_csv(output_file, index=False, encoding='utf-8')
 
     # Выводим статистику
-    texts_with_anglicisms = sum(1 for anglicisms_json in output_df['anglicisms'] if anglicisms_json != '[]')
-    print(f"Обработка завершена. Найдены англицизмы в {texts_with_anglicisms} из {len(output_df)} текстов.")
+    sentences_with_anglicisms = sum(1 for anglicisms_json in output_df['anglicisms'] if anglicisms_json != '[]')
+    print(f"Обработка завершена. Найдены англицизмы в {sentences_with_anglicisms} из {len(output_df)} предложений.")
+
+    print(f"Всего извлечено {total_sentences} предложений из {len(df)} текстов.")
+    print(f"Обнаружено и пропущено {duplicate_sentences} дубликатов предложений.")
 
     # Выводим информацию об использовании исключений
     if exceptions_stems:
@@ -281,11 +343,11 @@ def main():
     samples = output_df[output_df['anglicisms'] != '[]'].head(5)
     for i, (_, row) in enumerate(samples.iterrows(), 1):
         anglicisms = json.loads(row['anglicisms'])
-        text = row['original_text']
-        if len(text) > 100:
-            text = text[:100] + "..."
+        sentence = row['sentence']
+        if len(sentence) > 100:
+            sentence = sentence[:100] + "..."
         print(f"Пример {i}:")
-        print(f"  Текст: {text}")
+        print(f"  Предложение: {sentence}")
         print(f"  Англицизмы: {', '.join(anglicisms)}")
         print()
 
