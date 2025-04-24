@@ -9,7 +9,7 @@ def main() -> None:
     data_dir = 'assets'
     output_dir = 'assets'
     output_file = 'texts.csv'
-    file_pattern = 'rbc_articles_*.csv'
+    file_pattern = 'articles.csv'
     text_column = 'text'
 
     # Находим входные файлы
