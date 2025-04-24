@@ -2,8 +2,8 @@ import pandas as pd
 import re
 import os
 import json
-from nltk.stem.snowball import SnowballStemmer
 import nltk
+from natasha import Segmenter, MorphVocab, Doc, NewsEmbedding, NewsMorphTagger
 
 
 def main():
@@ -14,13 +14,31 @@ def main():
     texts_file = "assets/texts.csv"
     output_file = "assets/anglicisms_dataset.csv"
 
-    print("Настройка NLTK для обработки русского текста...")
+    print("Настройка natasha для лемматизации русского текста...")
     try:
+        # Инициализируем компоненты natasha
+        segmenter = Segmenter()
+        morph_vocab = MorphVocab()
+        emb = NewsEmbedding()
+        morph_tagger = NewsMorphTagger(emb)
+
+        # Загружаем также nltk для tokenize
         nltk.download('punkt', quiet=True)
-        stemmer = SnowballStemmer("russian")
     except Exception as e:
-        print(f"Ошибка при инициализации стеммера: {e}")
+        print(f"Ошибка при инициализации компонентов natasha: {e}")
         return
+
+    # Функция для лемматизации слова с помощью natasha
+    def lemmatize_word(word):
+        doc = Doc(word)
+        doc.segment(segmenter)
+        doc.tag_morph(morph_tagger)
+        for token in doc.tokens:
+            token.lemmatize(morph_vocab)
+        # Возвращаем лемму первого токена (для одного слова будет только один токен)
+        if doc.tokens:
+            return doc.tokens[0].lemma
+        return word  # Если не удалось лемматизировать, возвращаем исходное слово
 
     # Загрузка стоп-слов
     print(f"Проверка наличия файла стоп-слов {stopwords_file}...")
@@ -44,19 +62,19 @@ def main():
             print(f"Ошибка при загрузке стоп-слов из NLTK: {e}")
             print("Продолжаем без стоп-слов")
 
-    # Создаем множество из стемов стоп-слов для быстрой проверки
-    stopwords_stems = set(stemmer.stem(word) for word in stopwords)
+    # Создаем множество из лемм стоп-слов для быстрой проверки
+    stopwords_lemmas = set(lemmatize_word(word) for word in stopwords)
 
     # Загрузка исключений
     print(f"Проверка наличия файла исключений {exceptions_file}...")
     exceptions = []
-    exceptions_stems = set()
+    exceptions_lemmas = set()
     if os.path.exists(exceptions_file):
         try:
             with open(exceptions_file, 'r', encoding='utf-8') as f:
                 exceptions = [line.strip().lower() for line in f]
-            # Применяем стемминг к исключениям
-            exceptions_stems = set(stemmer.stem(word) for word in exceptions)
+            # Применяем лемматизацию к исключениям
+            exceptions_lemmas = set(lemmatize_word(word) for word in exceptions)
             print(f"Загружено {len(exceptions)} слов-исключений")
         except Exception as e:
             print(f"Ошибка при загрузке исключений: {e}")
@@ -68,15 +86,15 @@ def main():
     # Загрузка списка англицизмов
     try:
         with open(anglicisms_file, 'r', encoding='utf-8') as f:
-            # Загружаем англицизмы и применяем стемминг
+            # Загружаем англицизмы и применяем лемматизацию
             all_anglicisms = [line.strip().lower() for line in f]
 
             # Фильтруем англицизмы, убирая те, которые есть в стоп-словах
             filtered_anglicisms = []
             for word in all_anglicisms:
-                word_stem = stemmer.stem(word)
-                if word_stem not in stopwords_stems:
-                    filtered_anglicisms.append(word_stem)
+                word_lemma = lemmatize_word(word)
+                if word_lemma not in stopwords_lemmas:
+                    filtered_anglicisms.append(word_lemma)
 
             print(f"Загружено {len(all_anglicisms)} англицизмов")
             print(f"После фильтрации стоп-слов осталось {len(filtered_anglicisms)} англицизмов")
@@ -86,7 +104,7 @@ def main():
 
         # Выводим примеры для проверки
         if len(filtered_anglicisms) > 5:
-            print("Примеры англицизмов после фильтрации (в форме основы):")
+            print("Примеры англицизмов после фильтрации (в форме леммы):")
             for i, anglicism in enumerate(list(filtered_anglicisms)[:5]):
                 print(f"  {i + 1}. {anglicism}")
     except Exception as e:
@@ -119,9 +137,10 @@ def main():
         if pd.isna(text) or not isinstance(text, str):
             return []
 
-        # Регулярное выражение для разделения текста на предложения
-        # Учитываем точки, восклицательные знаки, вопросительные знаки как разделители предложений
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        # Используем natasha для разделения на предложения
+        doc = Doc(text)
+        doc.segment(segmenter)
+        sentences = [sent.text for sent in doc.sents]
 
         # Удаляем пустые предложения и предложения только из пробелов
         sentences = [s.strip() for s in sentences if s.strip()]
@@ -176,15 +195,16 @@ def main():
 
         # Извлекаем слова, находящиеся в кавычках
         quoted_words = extract_quoted_text(text)
-        # Создаем множество стемов слов в кавычках для быстрой проверки
-        quoted_stems = set(stemmer.stem(word.lower()) for word in quoted_words)
+        # Создаем множество лемм слов в кавычках для быстрой проверки
+        quoted_lemmas = set(lemmatize_word(word.lower()) for word in quoted_words)
 
-        # Разбиваем текст на слова, включая слова через дефис, но без цифр
-        # Используем регулярное выражение для поиска русских слов без цифр
-        word_matches = re.finditer(r'\b[а-яА-ЯёЁ]+-?[а-яА-ЯёЁ]+\b', text)
+        # Разбиваем текст на слова, включая слова через дефис
+        # ИЗМЕНЕНО: Улучшено регулярное выражение для корректной обработки слов через дефис
+        # \b - граница слова, далее русские буквы, затем опционально дефис и снова русские буквы
+        word_matches = re.finditer(r'\b[а-яА-ЯёЁ]+(?:-[а-яА-ЯёЁ]+)*\b', text)
 
         found_anglicisms = []
-        word_stems = {}  # Кэш для стеммированных слов
+        word_lemmas = {}  # Кэш для лемматизированных слов
 
         for match in word_matches:
             try:
@@ -195,31 +215,35 @@ def main():
                 if len(word) < 3:
                     continue
 
+                # Пропускаем словосочетания (проверяем наличие пробелов)
+                if ' ' in word:
+                    continue
+
                 # Проверяем условие: если слово с большой буквы и перед ним нет точки, то оно не англицизм
                 if word[0].isupper() and not has_dot_before(text, word_pos):
                     continue
 
-                # Проверяем, содержит ли слово цифры (хотя регулярка выше должна это исключать)
+                # Проверяем, содержит ли слово цифры
                 if any(char.isdigit() for char in word):
                     continue
 
                 # Приводим к нижнему регистру для дальнейшей обработки
                 word_lower = word.lower()
 
-                # Применяем стемминг
-                if word_lower not in word_stems:
-                    word_stems[word_lower] = stemmer.stem(word_lower)
-                word_stem = word_stems[word_lower]
+                # Применяем лемматизацию
+                if word_lower not in word_lemmas:
+                    word_lemmas[word_lower] = lemmatize_word(word_lower)
+                word_lemma = word_lemmas[word_lower]
 
                 # Проверяем, что:
-                # 1. Основа слова есть в списке основ англицизмов
-                # 2. Основа слова НЕ находится в списке стоп-слов
-                # 3. Основа слова НЕ находится в списке исключений
+                # 1. Лемма слова есть в списке лемм англицизмов
+                # 2. Лемма слова НЕ находится в списке стоп-слов
+                # 3. Лемма слова НЕ находится в списке исключений
                 # 4. Слово НЕ находится внутри кавычек (не является частью имени собственного)
-                if (word_stem in anglicisms_base_forms and
-                        word_stem not in stopwords_stems and
-                        word_stem not in exceptions_stems and
-                        word_stem not in quoted_stems):
+                if (word_lemma in anglicisms_base_forms and
+                        word_lemma not in stopwords_lemmas and
+                        word_lemma not in exceptions_lemmas and
+                        word_lemma not in quoted_lemmas):
 
                     # Дополнительная проверка, не является ли слово частью текста в кавычках
                     is_in_quotes = False
@@ -335,8 +359,8 @@ def main():
     print(f"Обнаружено и пропущено {duplicate_sentences} дубликатов предложений.")
 
     # Выводим информацию об использовании исключений
-    if exceptions_stems:
-        print(f"Во время обработки использовался список исключений ({len(exceptions_stems)} слов).")
+    if exceptions_lemmas:
+        print(f"Во время обработки использовался список исключений ({len(exceptions_lemmas)} слов).")
 
     # Выводим примеры для проверки
     print("\nПримеры найденных англицизмов:")
