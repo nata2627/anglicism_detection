@@ -1,3 +1,5 @@
+# Создает список уникальных слов из csv файла, сохраняет в txt
+
 import csv
 import json
 import re

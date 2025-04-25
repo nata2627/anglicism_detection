@@ -10,7 +10,7 @@ def main():
     # Пути к файлам
     anglicisms_file = "assets/clean_anglicism_2.txt"
     stopwords_file = "assets/stopwords.txt"
-    exceptions_file = "assets/exceptions.txt"  # Новый файл с исключениями
+    exceptions_file = "assets/exceptions_lemma.txt"  # Файл с исключениями в лемматизированной форме
     texts_file = "assets/texts.csv"
     output_file = "assets/anglicisms_dataset.csv"
 
@@ -65,17 +65,15 @@ def main():
     # Создаем множество из лемм стоп-слов для быстрой проверки
     stopwords_lemmas = set(lemmatize_word(word) for word in stopwords)
 
-    # Загрузка исключений
+    # Загрузка исключений (они уже в лемматизированной форме)
     print(f"Проверка наличия файла исключений {exceptions_file}...")
-    exceptions = []
     exceptions_lemmas = set()
     if os.path.exists(exceptions_file):
         try:
             with open(exceptions_file, 'r', encoding='utf-8') as f:
-                exceptions = [line.strip().lower() for line in f]
-            # Применяем лемматизацию к исключениям
-            exceptions_lemmas = set(lemmatize_word(word) for word in exceptions)
-            print(f"Загружено {len(exceptions)} слов-исключений")
+                # ИЗМЕНЕНО: Теперь слова уже в лемматизированной форме, применять lemmatize_word не нужно
+                exceptions_lemmas = set(line.strip().lower() for line in f)
+            print(f"Загружено {len(exceptions_lemmas)} лемматизированных слов-исключений")
         except Exception as e:
             print(f"Ошибка при загрузке исключений: {e}")
             print("Продолжаем без исключений")
@@ -199,7 +197,6 @@ def main():
         quoted_lemmas = set(lemmatize_word(word.lower()) for word in quoted_words)
 
         # Разбиваем текст на слова, включая слова через дефис
-        # ИЗМЕНЕНО: Улучшено регулярное выражение для корректной обработки слов через дефис
         # \b - граница слова, далее русские буквы, затем опционально дефис и снова русские буквы
         word_matches = re.finditer(r'\b[а-яА-ЯёЁ]+(?:-[а-яА-ЯёЁ]+)*\b', text)
 
@@ -238,7 +235,7 @@ def main():
                 # Проверяем, что:
                 # 1. Лемма слова есть в списке лемм англицизмов
                 # 2. Лемма слова НЕ находится в списке стоп-слов
-                # 3. Лемма слова НЕ находится в списке исключений
+                # 3. Лемма слова НЕ находится в списке исключений (теперь исключения уже в лемматизированной форме)
                 # 4. Слово НЕ находится внутри кавычек (не является частью имени собственного)
                 if (word_lemma in anglicisms_base_forms and
                         word_lemma not in stopwords_lemmas and
