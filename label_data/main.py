@@ -346,7 +346,20 @@ def main():
 
     # Преобразуем списки англицизмов в строки JSON для сохранения в CSV
     output_df['anglicisms'] = output_df['anglicisms'].apply(json.dumps, ensure_ascii=False)
-    output_df.to_csv(output_file, index=False, encoding='utf-8')
+    output_df.to_csv(output_file, index=False, encoding='utf-8', header=True)
+
+    # Проверяем первую строку файла и удаляем её, если она содержит "sentence,anglicisms"
+    try:
+        with open(output_file, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        # Проверяем, содержит ли первая строка "sentence,anglicisms"
+        if lines and "sentence,anglicisms" in lines[0]:
+            print("Удаляем дублирующий заголовок из первой строки...")
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.writelines(lines[1:])  # Записываем все строки, кроме первой
+    except Exception as e:
+        print(f"Ошибка при обработке файла после сохранения: {e}")
 
     # Выводим статистику
     sentences_with_anglicisms = sum(1 for anglicisms_json in output_df['anglicisms'] if anglicisms_json != '[]')
