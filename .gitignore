@@ -1,5 +1,6 @@
 # Окружение
 venv
+myenv
 
 # Логи
 *.log
@@ -20,4 +21,4 @@ parse_anglicism/utils/__pycache__/
 
 # Outputs
 outputs/
-
+assets/models

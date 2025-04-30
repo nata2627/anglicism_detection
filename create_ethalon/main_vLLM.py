@@ -3,13 +3,14 @@ import csv
 import json
 import re
 import itertools
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 from tqdm import tqdm
 import pandas as pd
 from sentence_transformers import SentenceTransformer, util
 from natasha import Segmenter, MorphVocab, Doc, NewsEmbedding, NewsMorphTagger
-
+from vllm import LLM, SamplingParams
+from vllm.config import CompilationConfig, CompilationLevel
 
 def ensure_dir(path):
     """Create directory if it doesn't exist."""
@@ -106,7 +107,8 @@ def lemmatize_word(word, segmenter, morph_vocab, morph_tagger):
     return word  # Если не удалось лемматизировать, возвращаем исходное слово
 
 
-def generate_synonyms(anglicism, model, tokenizer, device, segmenter, morph_vocab, morph_tagger, anglicisms_set,
+def generate_synonyms(original_text, anglicism, model, sampling_params, tokenizer, device, segmenter, morph_vocab,
+                      morph_tagger, anglicisms_set,
                       previous_synonyms=None, num_synonyms=7):
     """Этап 1: Генерация семи базовых русских синонимов для англицизма с проверками."""
 
@@ -114,16 +116,18 @@ def generate_synonyms(anglicism, model, tokenizer, device, segmenter, morph_voca
     anglicism_lemma = lemmatize_word(anglicism.lower(), segmenter, morph_vocab, morph_tagger)
 
     # Формируем промпт в зависимости от того, есть ли у нас уже отклоненные синонимы
-    system_prompt = f"""Ты эксперт по русскому языку. Твоя задача - предложить {num_synonyms} лучших русских эквивалента для замены указанного англицизма. 
+    system_prompt = f"""Ты эксперт по русскому языку. Твоя задача - предложить {num_synonyms} лучших русских эквивалента для замены указанного англицизма исходя из контекста. 
 
 Важно: верни только {num_synonyms} слов или коротких фраз в начальной форме, каждое на новой строке, без нумерации и без дополнительных пояснений. 
 ВАЖНО: СЛОВА НЕ ДОЛЖНЫ ПОВТОРЯТЬСЯ.
 ВАЖНО: Слова не должны иметь единую составную часть, ПРИМЕР КАК НЕ НАДО ДЕЛАТЬ: (Электронная связь и Электронный мир).
 ИНОГДА СЛОВА ИМЕЮТ ПЕРЕД НА ДРУГОЙ ЯЗЫК, НАПРИМЕР ДЛЯ 'блэкаут' подходит 'выключение света'.
 ПИСАТЬ НУЖНО СТРОГО НА РУССКОМ ЯЗЫКЕ. НУЖНО ПРЕДЛАГАТЬ СТРОГО ТОЛЬКО ИСКОННО РУССКИЕ СЛОВА.
-САМОЕ ВАЖНОЕ: ВЕРНИ ТОЛЬКО {num_synonyms} СЛОВ ИЛИ КОРОТКИХ ФРАЗ В НАЧАЛЬНОЙ ФОРМЕ, КАЖДОЕ НА НОВОЙ СТРОКЕ, БЕЗ НУМЕРАЦИИ И БЕЗ ДОПОЛНИТЕЛЬНЫХ ПОЯСНЕНИЙ."""
+НИ В КОЕМ СЛУЧАЕ НЕ ПИШИ ПОХОЖИЕ НА '{anglicism}' СЛОВА. НЕ НУЖНО ЗАМЕНЯТЬ СЛОВО 'БЛОГ' НА 'БЛОГЕР', 'ВЛОГЕР' ИЛИ 'БЛОГЕРША'.
+САМОЕ ВАЖНОЕ: ВЕРНИ ТОЛЬКО {num_synonyms} СЛОВ ИЛИ КОРОТКИХ ФРАЗ В НАЧАЛЬНОЙ ФОРМЕ, КАЖДОЕ НА НОВОЙ СТРОКЕ, БЕЗ НУМЕРАЦИИ И БЕЗ ДОПОЛНИТЕЛЬНЫХ ПОЯСНЕНИЙ.
+ПОДБИРАЙ СИНОНЕМУ ИСХОДЯ ИЗ КОНТЕКСТА: {original_text}"""
 
-    user_prompt = f"Предложи {num_synonyms} русских эквивалента для англицизма: '{anglicism}'. НИ В КОЕМ СЛУЧАЕ НЕ ПИШИ ПОХОЖИЕ НА '{anglicism}' СЛОВА. НЕ НУЖНО ЗАМЕНЯТЬ СЛОВО 'БЛОГ' НА 'БЛОГЕР', 'ВЛОГЕР' ИЛИ 'БЛОГЕРША'."
+    user_prompt = (f"Предложи {num_synonyms} русских эквивалента для англицизма: '{anglicism}'.")
 
     # Если у нас есть предыдущие синонимы, которые нужно исключить
     if previous_synonyms:
@@ -135,36 +139,21 @@ def generate_synonyms(anglicism, model, tokenizer, device, segmenter, morph_voca
         {"role": "user", "content": user_prompt}
     ]
 
-    # Применение шаблона чата
-    prompt = tokenizer.apply_chat_template(
+    # Токенизация входных данных для формата чата
+    text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True
     )
 
-    # Токенизация входных данных
-    model_inputs = tokenizer([prompt], return_tensors="pt").to(device)
+    # Генерация ответа с vLLM
+    outputs = model.generate([text], sampling_params=sampling_params)
 
-    # Генерация ответа
-    with torch.no_grad():
-        generated_ids = model.generate(
-            **model_inputs,
-            max_new_tokens=128,  # Увеличиваем, так как нам нужно больше синонимов
-            temperature=0.9,
-            top_p=0.9,
-            do_sample=True
-        )
-
-    # Выделение только сгенерированной части
-    generated_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-    ]
-
-    # Декодирование ответа
-    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    # vLLM возвращает RequestOutput объект, получаем текст из первого результата
+    response = outputs[0].outputs[0].text  # outputs - это список, берем первый элемент
 
     # Обработка ответа - разделение на отдельные синонимы
-    raw_synonyms = [line.strip().lower() for line in response.split('\n') if line.strip()]  # Приводим к нижнему регистру здесь
+    raw_synonyms = [line.strip().lower() for line in response.split('\n') if line.strip()]
     clean_synonyms = []
 
     for syn in raw_synonyms:
@@ -182,11 +171,12 @@ def generate_synonyms(anglicism, model, tokenizer, device, segmenter, morph_voca
         # Проверяем синоним новой функцией is_anglicism
         if is_anglicism(synonym, anglicisms_set, segmenter, morph_vocab, morph_tagger):
             invalid_synonyms.append(synonym)
-            print(f"Отклонён синоним '{synonym}' для '{anglicism}': является англицизмом")
+            print(f"\nОтклонён синоним '{synonym}' для '{anglicism}': является англицизмом")
         # Проверяем, не является ли синоним тем же самым словом
-        elif lemmatize_word(synonym.lower(), segmenter, morph_vocab, morph_tagger) == anglicism_lemma or synonym.lower() == anglicism.lower():
+        elif lemmatize_word(synonym.lower(), segmenter, morph_vocab,
+                            morph_tagger) == anglicism_lemma or synonym.lower() == anglicism.lower():
             invalid_synonyms.append(synonym)
-            print(f"Отклонён синоним '{synonym}' для '{anglicism}': совпадает с англицизмом")
+            print(f"\nОтклонён синоним '{synonym}' для '{anglicism}': совпадает с англицизмом")
         else:
             valid_synonyms.append(synonym)
 
@@ -201,7 +191,8 @@ def generate_synonyms(anglicism, model, tokenizer, device, segmenter, morph_voca
 
         # Рекурсивно вызываем функцию еще раз с указанием отклоненных вариантов
         print(f"Недостаточно валидных синонимов для '{anglicism}', генерирую новые...")
-        new_synonyms = generate_synonyms(anglicism, model, tokenizer, device, segmenter, morph_vocab, morph_tagger,
+        new_synonyms = generate_synonyms(original_text, anglicism, model, sampling_params, tokenizer, device, segmenter,
+                                         morph_vocab, morph_tagger,
                                          anglicisms_set, all_rejected, num_synonyms)
 
         # Если у нас есть несколько валидных синонимов и несколько новых, объединяем их
@@ -410,27 +401,18 @@ def transform_sentence_with_synonym(anglicism, replaced_text, model, tokenizer, 
         add_generation_prompt=True
     )
 
-    # Токенизация входных данных
-    model_inputs = tokenizer([prompt], return_tensors="pt").to(device)
+    # Создание новых параметров сэмплирования для трансформации
+    transform_params = SamplingParams(
+        temperature=0.3,
+        top_p=0.95,
+        max_tokens=128
+    )
 
-    # Генерация ответа
-    with torch.no_grad():
-        generated_ids = model.generate(
-            **model_inputs,
-            max_new_tokens=256,  # Увеличиваем длину, так как нам нужно целое предложение
-            temperature=0.3,  # Уменьшаем температуру для более точного соответствия грамматике
-            top_p=0.95,
-            do_sample=True
-        )
-    # Выделение только сгенерированной части
-    generated_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-    ]
+    # Генерация ответа с vLLM
+    outputs = model.generate([prompt], sampling_params=transform_params)
 
-    # Декодирование ответа
-    transformed_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-    print(f"ОТЛАДКА. ПРОМПТ: {messages}")
-    print(f"ОТЛАДКА. Ответ: {transformed_text}")
+    # Получаем текст из первого результата
+    transformed_text = outputs[0].outputs[0].text
 
     return transformed_text
 
@@ -447,25 +429,18 @@ def calculate_semantic_similarity(original_text, replaced_text, semantic_model):
     return similarity
 
 
-def replace_anglicisms(text, anglicisms, model, tokenizer, semantic_model, device, segmenter, morph_vocab, morph_tagger,
+def replace_anglicisms(text, anglicisms, model, sampling_params, tokenizer, semantic_model, device, segmenter, morph_vocab, morph_tagger,
                        anglicisms_set, exceptions_lemmas=None, stopwords_lemmas=None):
     """Replace anglicisms in the text using the two-stage approach."""
     original_text = text
     replacement_details = {}
 
-    # Добавляем специальные токены в словарь токенизатора
-    special_tokens = {"additional_special_tokens": ["<anglicism>", "</anglicism>", "<synonym>", "</synonym>"]}
-    tokenizer.add_special_tokens(special_tokens)
-
-    # Изменяем размер эмбеддингов модели для новых токенов
-    model.resize_token_embeddings(len(tokenizer))
-
     # Step 1: Generate synonyms for each anglicism
     synonyms_map = {}
     for anglicism in anglicisms:
-        synonyms = generate_synonyms(anglicism, model, tokenizer, device, segmenter, morph_vocab, morph_tagger,
+        synonyms = generate_synonyms(original_text, anglicism, model, sampling_params, tokenizer, device, segmenter, morph_vocab, morph_tagger,
                                      anglicisms_set, num_synonyms=10)
-        print(f"Сгенерированные синонимы для '{anglicism}': {synonyms}")
+        print(f"\n Сгенерированные синонимы для '{anglicism}': {synonyms}")
         synonyms_map[anglicism] = synonyms
 
     # Step 2: Generate all possible combinations of replacements
@@ -511,6 +486,7 @@ def replace_anglicisms(text, anglicisms, model, tokenizer, semantic_model, devic
 
     transformed_texts.sort(key=lambda x: x[2], reverse=True)
     best_transformed = transformed_texts[0]
+    print(f"\nИтоговое предложение: {best_transformed}")
 
     # Сохраняем детали замены
     for anglicism in anglicisms:
@@ -524,7 +500,7 @@ def replace_anglicisms(text, anglicisms, model, tokenizer, semantic_model, devic
     return best_transformed[0], replacement_details
 
 
-def process_dataset(dataset, model, tokenizer, semantic_model, device, segmenter, morph_vocab, morph_tagger,
+def process_dataset(dataset, model, sampling_params, tokenizer, semantic_model, device, segmenter, morph_vocab, morph_tagger,
                     anglicisms_set, exceptions_lemmas=None, stopwords_lemmas=None):
     """Process the entire dataset."""
     processed_data = []
@@ -542,7 +518,7 @@ def process_dataset(dataset, model, tokenizer, semantic_model, device, segmenter
         try:
             # Замена англицизмов с выбором наилучшего варианта
             replaced_text, replacement_details = replace_anglicisms(
-                text, anglicisms, model, tokenizer, semantic_model, device, segmenter, morph_vocab, morph_tagger,
+                text, anglicisms, model, sampling_params, tokenizer, semantic_model, device, segmenter, morph_vocab, morph_tagger,
                 anglicisms_set, exceptions_lemmas, stopwords_lemmas
             )
 
@@ -633,13 +609,14 @@ def main():
 
     # Загрузка основной модели для генерации замен
     model_name = "Qwen/Qwen2.5-3B-Instruct"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype="auto",
-        device_map="auto",
-        trust_remote_code=True
+    model = LLM(
+        model=model_name,
+        gpu_memory_utilization=0.9,
+        dtype="auto",
+        enforce_eager=True
     )
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    sampling_params = SamplingParams(temperature=0.7, top_p=0.8, repetition_penalty=1.05, max_tokens=512)
 
     # Загрузка модели для оценки семантического сходства
     print("Loading semantic model...")
@@ -652,14 +629,19 @@ def main():
     print(f"Loaded {len(dataset)} examples.")
 
     # Process dataset
-    print("Processing dataset...")
-    processed_data = process_dataset(dataset, model, tokenizer, semantic_model, device, segmenter, morph_vocab,
+    print("===================================================================\n"
+          "============================== START ==============================\n"
+          "===================================================================")
+    processed_data = process_dataset(dataset, model, sampling_params, tokenizer, semantic_model, device, segmenter, morph_vocab,
                                      morph_tagger, anglicisms_set)
 
     # Save results
     print("Saving results...")
     save_dataset(processed_data, output_path)
     print(f"Saved results to {output_path}")
+    print("==================================================================\n"
+          "============================== DONE ==============================\n"
+          "==================================================================")
 
 
 if __name__ == "__main__":
