@@ -20,9 +20,14 @@ from natasha import (
 )
 
 
-def detect_anglicism(sentence, segmenter):
+def detect_anglicism(sentence, segmenter, morph_vocab=None, morph_tagger=None):
     MISSING_TOKEN = "<NONE>"  # специальный знак для отсутствующих слов
     REQUIRED_FEATURES = ['Animacy', 'Aspect', 'Case', 'Gender', 'Foreign', 'Number']  # Требуемые граммемы
+
+    # Кэш для анализа слов
+    word_analysis_cache = {}
+    # Кэш для подсчета букв
+    letter_count_cache = {}
 
     def tokenize_text(text):
         doc = Doc(text)
@@ -38,12 +43,21 @@ def detect_anglicism(sentence, segmenter):
         return left_left, left, right, right_right
 
     def analyze_word(word):
-        morph_vocab = MorphVocab()
-        emb = NewsEmbedding()
-        morph_tagger = NewsMorphTagger(emb)
+        # Проверяем, анализировали ли мы это слово раньше
+        if word in word_analysis_cache:
+            return word_analysis_cache[word]
+
+        # Инициализация необходимых компонентов, если они не переданы в функцию
+        nonlocal morph_vocab, morph_tagger
+        if morph_vocab is None:
+            morph_vocab = MorphVocab()
+        if morph_tagger is None:
+            emb = NewsEmbedding()
+            morph_tagger = NewsMorphTagger(emb)
+
         # Если слово - пустое или специальный токен, возвращаем значения по умолчанию
         if word == MISSING_TOKEN:
-            return {
+            result = {
                 'text': MISSING_TOKEN,
                 'lemma': MISSING_TOKEN,
                 'length': 0,
@@ -51,6 +65,8 @@ def detect_anglicism(sentence, segmenter):
                 'is_capitalized': 0,
                 'features': {feature: '' for feature in REQUIRED_FEATURES}
             }
+            word_analysis_cache[word] = result
+            return result
 
         # Анализ с помощью Natasha
         doc = Doc(word)
@@ -59,7 +75,7 @@ def detect_anglicism(sentence, segmenter):
 
         # Если токенов нет, возвращаем значения по умолчанию с текстом слова
         if not doc.tokens:
-            return {
+            result = {
                 'text': word,
                 'lemma': word,
                 'length': len(word),
@@ -67,6 +83,8 @@ def detect_anglicism(sentence, segmenter):
                 'is_capitalized': 1 if word[0].isupper() else 0,
                 'features': {feature: '' for feature in REQUIRED_FEATURES}
             }
+            word_analysis_cache[word] = result
+            return result
 
         token = doc.tokens[0]
         token.lemmatize(morph_vocab)
@@ -75,7 +93,7 @@ def detect_anglicism(sentence, segmenter):
         lemma = token.lemma
         features = token.feats if token.feats else {}
 
-        return {
+        result = {
             'text': word,
             'lemma': lemma,
             'length': len(word),
@@ -84,7 +102,15 @@ def detect_anglicism(sentence, segmenter):
             'features': {feature: features.get(feature, '') for feature in REQUIRED_FEATURES}
         }
 
+        # Сохраняем результат в кэш
+        word_analysis_cache[word] = result
+        return result
+
     def count_letters(word):
+        # Проверяем, есть ли слово в кэше
+        if word in letter_count_cache:
+            return letter_count_cache[word]
+
         # Приводим к нижнему регистру
         word = word.lower()
         # Подсчет отдельных букв
@@ -97,7 +123,9 @@ def detect_anglicism(sentence, segmenter):
                 doubles.append(word[i] + word[i + 1])
         double_counts = Counter(doubles)
 
-        return letter_counts, double_counts
+        result = (letter_counts, double_counts)
+        letter_count_cache[word] = result
+        return result
 
     # Собираем данные для анализа
     data = []
@@ -108,6 +136,10 @@ def detect_anglicism(sentence, segmenter):
     for i, word in enumerate(tokens):
         if word in words_to_process and word not in word_indices:
             word_indices[word] = i
+
+    # Предварительно создаем все буквы и сдвоенные буквы
+    all_letters = set(chr(i) for i in range(ord('а'), ord('я') + 1)) | {'ё'}
+    all_double_letters = {letter + letter for letter in all_letters}
 
     # Обработка выбранных слов в тексте
     for word, word_index in word_indices.items():
@@ -184,57 +216,45 @@ def detect_anglicism(sentence, segmenter):
         ])
         for feature in REQUIRED_FEATURES:
             headers.append(f'{pos}_{feature}')
-    # Собираем все возможные буквы русского алфавита
-    all_letters = set(chr(i) for i in range(ord('а'), ord('я') + 1)) | {'ё'}
-    # Создаем множество всех возможных сдвоенных букв
-    all_double_letters = {letter + letter for letter in all_letters}
 
-    # Добавляем счетчики букв
-    for letter in sorted(all_letters):
-        headers.append(f'count_{letter}')
+    # Подготовка данных для записи
+    rows_to_write = []
+    for entry in data:
+        row_dict = {
+            'word': entry['word'],
+            'lemma': entry['lemma'],
+            'is_anglicism': entry['is_anglicism'],
+            'length': entry['length'],
+            'is_capitalized': entry['is_capitalized'],
+            'left_left': entry['left_left'],
+            'left': entry['left'],
+            'right': entry['right'],
+            'right_right': entry['right_right']
+        }
 
-    # Добавляем счетчики сдвоенных букв
-    for double in sorted(all_double_letters):
-        headers.append(f'count_{double}')
+        # Заполняем граммемы для основного слова
+        for feature in REQUIRED_FEATURES:
+            row_dict[feature] = entry['features'].get(feature, '')
 
-        # Подготовка данных для записи
-        rows_to_write = []
-        for entry in data:
-            row_dict = {
-                'word': entry['word'],
-                'lemma': entry['lemma'],
-                'is_anglicism': entry['is_anglicism'],
-                'length': entry['length'],
-                'is_capitalized': entry['is_capitalized'],
-                'left_left': entry['left_left'],
-                'left': entry['left'],
-                'right': entry['right'],
-                'right_right': entry['right_right']
-            }
+        # Заполняем информацию о контексте
+        for pos in context_positions:
+            row_dict[f'{pos}_length'] = entry[f'{pos}_length']
+            row_dict[f'{pos}_is_anglicism'] = entry[f'{pos}_is_anglicism']
+            row_dict[f'{pos}_is_capitalized'] = entry[f'{pos}_is_capitalized']
 
-            # Заполняем граммемы для основного слова
+            # Заполняем граммемы для слов контекста
             for feature in REQUIRED_FEATURES:
-                row_dict[feature] = entry['features'].get(feature, '')
+                row_dict[f'{pos}_{feature}'] = entry[f'{pos}_features'].get(feature, '')
 
-            # Заполняем информацию о контексте
-            for pos in context_positions:
-                row_dict[f'{pos}_length'] = entry[f'{pos}_length']
-                row_dict[f'{pos}_is_anglicism'] = entry[f'{pos}_is_anglicism']
-                row_dict[f'{pos}_is_capitalized'] = entry[f'{pos}_is_capitalized']
+        # Заполняем счетчики букв
+        for letter in sorted(all_letters):
+            row_dict[f'count_{letter}'] = entry['letter_counts'].get(letter, 0)
 
-                # Заполняем граммемы для слов контекста
-                for feature in REQUIRED_FEATURES:
-                    row_dict[f'{pos}_{feature}'] = entry[f'{pos}_features'].get(feature, '')
+        # Заполняем счетчики сдвоенных букв
+        for double in sorted(all_double_letters):
+            row_dict[f'count_{double}'] = entry['double_letter_counts'].get(double, 0)
 
-            # Заполняем счетчики букв
-            for letter in sorted(all_letters):
-                row_dict[f'count_{letter}'] = entry['letter_counts'].get(letter, 0)
-
-            # Заполняем счетчики сдвоенных букв
-            for double in sorted(all_double_letters):
-                row_dict[f'count_{double}'] = entry['double_letter_counts'].get(double, 0)
-
-            rows_to_write.append(row_dict)
+        rows_to_write.append(row_dict)
 
     return pd.DataFrame(rows_to_write)
 
@@ -357,20 +377,42 @@ def modify_table(df, tokenizer, model):
     # Сохраняем список столбцов BERT для последующего анализа мультиколлинеарности
     bert_columns = []
 
+    # Используем кэш для эмбеддингов - уникальные тексты получают эмбеддинги только один раз
+    text_embedding_cache = {}
+
     # Получаем эмбеддинги для каждого текстового столбца
     for col in text_columns:
-        # Получаем эмбеддинги только для полного датасета
-        embeddings = get_bert_embeddings(df[col].values.tolist(), model, tokenizer)
+        # Собираем все уникальные тексты в столбце
+        unique_texts = df[col].dropna().unique()
+
+        # Создаем словарь текст -> эмбеддинг для всех уникальных текстов
+        unique_texts_list = unique_texts.tolist()
+        uncached_texts = [text for text in unique_texts_list if text not in text_embedding_cache]
+
+        # Получаем эмбеддинги для текстов, которых еще нет в кэше
+        if uncached_texts:
+            new_embeddings = get_bert_embeddings(uncached_texts, model, tokenizer)
+            for i, text in enumerate(uncached_texts):
+                text_embedding_cache[text] = new_embeddings[i]
+
+        # Создаем матрицу эмбеддингов для всех строк в столбце
+        embeddings = np.zeros((len(df), 768))  # 768 - размерность BERT эмбеддингов
+        for i, text in enumerate(df[col]):
+            if pd.isna(text):
+                text = ""
+            embeddings[i] = text_embedding_cache.get(text, np.zeros(768))
+
+        # Создаем столбцы для эмбеддингов
         embedding_cols = [f"{col}_bert_{i}" for i in range(embeddings.shape[1])]
         bert_columns.extend(embedding_cols)
         embedding_df = pd.DataFrame(embeddings, columns=embedding_cols)
 
-        # Удаляем оригинальный столбец и добавляем эмбеддинги в полный датасет
+        # Удаляем оригинальный столбец и добавляем эмбеддинги
         df_transformed = df_transformed.drop(col, axis=1)
         df_transformed = pd.concat([df_transformed.reset_index(drop=True),
                                     embedding_df.reset_index(drop=True)], axis=1)
 
-    return df_transformed.drop(columns=["length","is_anglicism"])
+    return df_transformed.drop(columns=["length", "is_anglicism"])
 
 
 def evaluate_anglicism(clear_table, model_ML):
@@ -427,13 +469,17 @@ def main():
     with open("assets/ML_model.pkl", "rb") as f:
         model_ML = pickle.load(f)
 
+    # Инициализация компонентов Natasha один раз
     segmenter = Segmenter()
+    morph_vocab = MorphVocab()
+    emb = NewsEmbedding()
+    morph_tagger = NewsMorphTagger(emb)
 
     df = pd.read_csv(input_file)  # Загрузка текстов (в виде предложений)
     sentences = df[df.columns[0]]
     results = []
     for sentence in tqdm(sentences):
-        table = detect_anglicism(sentence, segmenter)
+        table = detect_anglicism(sentence, segmenter, morph_vocab, morph_tagger)
         # Сохраняем оригинальные слова перед трансформацией
         original_words = table['word'].tolist()
         # Создаем словарь для сопоставления индексов с оригинальными словами
