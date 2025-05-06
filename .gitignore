@@ -12,6 +12,7 @@ myenv
 *.xlsx
 *.pyc
 *.json
+*.pkl
 
 # Лишнее
 .DS_Store
