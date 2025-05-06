@@ -12,7 +12,7 @@ from datetime import datetime
 
 # Пути к файлам
 input_csv = "assets/dataset_transformed.csv"
-output_dir = "assets/models/xgboost"
+output_dir = "assets/models/final"
 os.makedirs(output_dir, exist_ok=True)
 
 # Имя модели с временной меткой
@@ -59,7 +59,7 @@ def main():
 
     # Базовая модель для поиска параметров
     xgb_model = xgb.XGBClassifier(
-        n_estimators=500,
+        n_estimators=1000,
         learning_rate=0.1,
         verbosity=1,
         random_state=42,

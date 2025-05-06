@@ -407,4 +407,4 @@ def process_dataset(max_samples_per_class=10000):
 
 if __name__ == "__main__":
     # Вызываем функцию с ограничением в 10000 примеров на класс
-    process_dataset(max_samples_per_class=10000)
+    process_dataset(max_samples_per_class=1000)
