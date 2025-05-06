@@ -37,6 +37,12 @@ def main():
         print("Ошибка: в датасете отсутствует целевая переменная 'is_anglicism'")
         return
 
+    # Проверка наличия столбца length и его удаление
+    if 'length' in df.columns:
+        print("Удаляем столбец 'length' из набора признаков...")
+        df = df.drop('length', axis=1)
+        print(f"Новая размерность датасета после удаления столбца: {df.shape[0]} строк, {df.shape[1]} столбцов")
+
     # Разделение на признаки и целевую переменную
     X = df.drop('is_anglicism', axis=1)
     y = df['is_anglicism']
@@ -121,6 +127,7 @@ def main():
         f.write(f"Размер датасета: {df.shape[0]} примеров, {df.shape[1]} признаков\n")
         f.write(f"Обучающая выборка: {X_train.shape[0]} примеров\n")
         f.write(f"Тестовая выборка: {X_test.shape[0]} примеров\n\n")
+        f.write("Примечание: столбец 'length' исключен из набора признаков\n\n")
         f.write("\nМетрики на тестовой выборке:\n")
         f.write(f"  Точность (Accuracy): {accuracy:.4f}\n")
         f.write(f"  Точность (Precision): {precision:.4f}\n")
