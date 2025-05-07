@@ -65,6 +65,42 @@ def load_anglicisms_set(file_path, segmenter, morph_vocab, morph_tagger):
     return anglicisms_lemmas
 
 
+def load_anglicism_dictionary(file_path):
+    """Загрузка словаря англицизмов с их синонимами из CSV файла."""
+    anglicism_dict = {}
+
+    try:
+        # Загружаем CSV файл с помощью pandas
+        df = pd.read_csv(file_path, encoding='utf-8')
+
+        # Проходим по каждой строке
+        for _, row in df.iterrows():
+            word = row['word'].strip().lower() if pd.notna(row['word']) else None
+
+            if not word:
+                continue
+
+            synonyms = []
+
+            # Собираем непустые синонимы из столбцов synonim_1 до synonim_5
+            for i in range(1, 6):
+                col_name = f'synonim_{i}'
+                if col_name in row.index and pd.notna(row[col_name]) and row[col_name].strip():
+                    synonyms.append(row[col_name].strip().lower())
+
+            # Добавляем запись в словарь, если есть синонимы
+            if synonyms:
+                anglicism_dict[word] = synonyms
+
+        print(f"Loaded {len(anglicism_dict)} anglicisms with synonyms from dictionary")
+    except Exception as e:
+        print(f"Error loading anglicism dictionary: {e}")
+        import traceback
+        traceback.print_exc()
+
+    return anglicism_dict
+
+
 def is_anglicism(word, anglicisms_set, segmenter, morph_vocab, morph_tagger):
     """Проверяет, является ли слово англицизмом, учитывая исходную форму и части слов через дефис."""
     word = word.lower().strip()
@@ -107,121 +143,114 @@ def lemmatize_word(word, segmenter, morph_vocab, morph_tagger):
 
 
 def generate_synonyms(anglicism, model, tokenizer, device, segmenter, morph_vocab, morph_tagger, anglicisms_set,
-                      previous_synonyms=None, num_synonyms=7):
-    """Этап 1: Генерация семи базовых русских синонимов для англицизма с проверками."""
+                      previous_synonyms=None, num_synonyms=7, anglicism_dict=None):
+    """Этап 1: Генерация базовых русских синонимов для англицизма с проверками и добавлением из словаря."""
 
     # Приводим англицизм к начальной форме
     anglicism_lemma = lemmatize_word(anglicism.lower(), segmenter, morph_vocab, morph_tagger)
 
-    # Формируем промпт в зависимости от того, есть ли у нас уже отклоненные синонимы
-    system_prompt = f"""Ты эксперт по русскому языку. Твоя задача - предложить {num_synonyms} лучших русских эквивалента для замены указанного англицизма. 
+    # Множество для отслеживания валидных синонимов (чтобы избежать дубликатов)
+    all_valid_synonyms = set()
 
-Важно: верни только {num_synonyms} слов или коротких фраз в начальной форме, каждое на новой строке, без нумерации и без дополнительных пояснений. 
+    # Сначала проверяем, есть ли англицизм в нашем словаре
+    if anglicism_dict and anglicism_lemma in anglicism_dict:
+        dictionary_synonyms = anglicism_dict[anglicism_lemma]
+        for synonym in dictionary_synonyms:
+            # Проверяем также синонимы из словаря на валидность
+            if not is_anglicism(synonym, anglicisms_set, segmenter, morph_vocab, morph_tagger):
+                if lemmatize_word(synonym.lower(), segmenter, morph_vocab,
+                                  morph_tagger) != anglicism_lemma and synonym.lower() != anglicism.lower():
+                    all_valid_synonyms.add(synonym)
+
+    # Определяем, сколько еще синонимов нам нужно сгенерировать
+    remaining_synonyms = max(0, num_synonyms - len(all_valid_synonyms))
+
+    # Генерируем синонимы с помощью модели, только если нам нужно больше
+    if remaining_synonyms > 0:
+        # Формируем промпт в зависимости от того, есть ли у нас уже отклоненные синонимы
+        system_prompt = f"""Ты эксперт по русскому языку. Твоя задача - предложить {remaining_synonyms} лучших русских эквивалента для замены указанного англицизма. 
+
+Важно: верни только {remaining_synonyms} слов или коротких фраз в начальной форме, каждое на новой строке, без нумерации и без дополнительных пояснений. 
 ВАЖНО: СЛОВА НЕ ДОЛЖНЫ ПОВТОРЯТЬСЯ.
 ВАЖНО: Слова не должны иметь единую составную часть, ПРИМЕР КАК НЕ НАДО ДЕЛАТЬ: (Электронная связь и Электронный мир).
-ИНОГДА СЛОВА ИМЕЮТ ПЕРЕД НА ДРУГОЙ ЯЗЫК, НАПРИМЕР ДЛЯ 'блэкаут' подходит 'выключение света'.
+ИНОГДА СЛОВА ИМЕЮТ ПЕРЕВОД НА ДРУГОЙ ЯЗЫК, НАПРИМЕР ДЛЯ 'блэкаут' подходит 'выключение света'.
 ПИСАТЬ НУЖНО СТРОГО НА РУССКОМ ЯЗЫКЕ. НУЖНО ПРЕДЛАГАТЬ СТРОГО ТОЛЬКО ИСКОННО РУССКИЕ СЛОВА.
-САМОЕ ВАЖНОЕ: ВЕРНИ ТОЛЬКО {num_synonyms} СЛОВ ИЛИ КОРОТКИХ ФРАЗ В НАЧАЛЬНОЙ ФОРМЕ, КАЖДОЕ НА НОВОЙ СТРОКЕ, БЕЗ НУМЕРАЦИИ И БЕЗ ДОПОЛНИТЕЛЬНЫХ ПОЯСНЕНИЙ."""
+САМОЕ ВАЖНОЕ: ВЕРНИ ТОЛЬКО {remaining_synonyms} СЛОВ ИЛИ КОРОТКИХ ФРАЗ В НАЧАЛЬНОЙ ФОРМЕ, КАЖДОЕ НА НОВОЙ СТРОКЕ, БЕЗ НУМЕРАЦИИ И БЕЗ ДОПОЛНИТЕЛЬНЫХ ПОЯСНЕНИЙ."""
 
-    user_prompt = f"Предложи {num_synonyms} русских эквивалента для англицизма: '{anglicism}'. НИ В КОЕМ СЛУЧАЕ НЕ ПИШИ ПОХОЖИЕ НА '{anglicism}' СЛОВА. НЕ НУЖНО ЗАМЕНЯТЬ СЛОВО 'БЛОГ' НА 'БЛОГЕР', 'ВЛОГЕР' ИЛИ 'БЛОГЕРША'."
+        user_prompt = f"Предложи {remaining_synonyms} русских эквивалента для англицизма: '{anglicism}'. НИ В КОЕМ СЛУЧАЕ НЕ ПИШИ ПОХОЖИЕ НА '{anglicism}' СЛОВА. НЕ НУЖНО ЗАМЕНЯТЬ СЛОВО 'БЛОГ' НА 'БЛОГЕР', 'ВЛОГЕР' ИЛИ 'БЛОГЕРША'."
 
-    # Если у нас есть предыдущие синонимы, которые нужно исключить
-    if previous_synonyms:
-        user_prompt = f"Предложи {num_synonyms} русских эквивалента для англицизма: '{anglicism}'. Не предлагай следующие варианты, так как они не подходят: {', '.join(previous_synonyms)}"
+        # Если у нас есть предыдущие синонимы, которые нужно исключить
+        if previous_synonyms:
+            user_prompt = f"Предложи {remaining_synonyms} русских эквивалента для англицизма: '{anglicism}'. Не предлагай следующие варианты, так как они не подходят: {', '.join(previous_synonyms)}"
 
-    # Формирование сообщений согласно формату
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt}
-    ]
+        # Добавляем информацию о синонимах из словаря, если они есть
+        if all_valid_synonyms:
+            dict_synonyms_str = ', '.join(all_valid_synonyms)
+            user_prompt += f" Вот некоторые варианты замены, которые уже есть: {dict_synonyms_str}. Предложи новые варианты."
 
-    # Применение шаблона чата
-    prompt = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True
-    )
+        # Формирование сообщений согласно формату
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
 
-    # Токенизация входных данных
-    model_inputs = tokenizer([prompt], return_tensors="pt").to(device)
-
-    # Генерация ответа
-    with torch.no_grad():
-        generated_ids = model.generate(
-            **model_inputs,
-            max_new_tokens=128,  # Увеличиваем, так как нам нужно больше синонимов
-            temperature=0.9,
-            top_p=0.9,
-            do_sample=True
+        # Применение шаблона чата
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
         )
 
-    # Выделение только сгенерированной части
-    generated_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-    ]
+        # Токенизация входных данных
+        model_inputs = tokenizer([prompt], return_tensors="pt").to(device)
 
-    # Декодирование ответа
-    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        # Генерация ответа
+        with torch.no_grad():
+            generated_ids = model.generate(
+                **model_inputs,
+                max_new_tokens=128,
+                temperature=0.9,
+                top_p=0.9,
+                do_sample=True
+            )
 
-    # Обработка ответа - разделение на отдельные синонимы
-    raw_synonyms = [line.strip().lower() for line in response.split('\n') if line.strip()]  # Приводим к нижнему регистру здесь
-    clean_synonyms = []
+        # Выделение только сгенерированной части
+        generated_ids = [
+            output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+        ]
 
-    for syn in raw_synonyms:
-        # Удаляем цифры и знаки пунктуации в начале строки
-        cleaned = syn.lstrip('0123456789. -)')
-        cleaned = cleaned.strip()
-        if cleaned:
-            clean_synonyms.append(cleaned)
+        # Декодирование ответа
+        response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
-    # Проверка каждого синонима на соответствие требованиям
-    valid_synonyms = []
-    invalid_synonyms = []
+        # Обработка ответа - разделение на отдельные синонимы
+        raw_synonyms = [line.strip().lower() for line in response.split('\n') if
+                        line.strip()]  # Приводим к нижнему регистру
+        clean_synonyms = []
 
-    for synonym in clean_synonyms:
-        # Проверяем синоним новой функцией is_anglicism
-        if is_anglicism(synonym, anglicisms_set, segmenter, morph_vocab, morph_tagger):
-            invalid_synonyms.append(synonym)
-            print(f"Отклонён синоним '{synonym}' для '{anglicism}': является англицизмом")
-        # Проверяем, не является ли синоним тем же самым словом
-        elif lemmatize_word(synonym.lower(), segmenter, morph_vocab, morph_tagger) == anglicism_lemma or synonym.lower() == anglicism.lower():
-            invalid_synonyms.append(synonym)
-            print(f"Отклонён синоним '{synonym}' для '{anglicism}': совпадает с англицизмом")
-        else:
-            valid_synonyms.append(synonym)
+        for syn in raw_synonyms:
+            # Удаляем цифры и знаки пунктуации в начале строки
+            cleaned = syn.lstrip('0123456789. -)')
+            cleaned = cleaned.strip()
+            if cleaned:
+                clean_synonyms.append(cleaned)
 
-    # Если у нас достаточно валидных синонимов
-    if len(valid_synonyms) >= 5:
-        return valid_synonyms
+        # Проверка каждого синонима на соответствие требованиям
+        for synonym in clean_synonyms:
+            # Проверяем синоним новой функцией is_anglicism
+            if is_anglicism(synonym, anglicisms_set, segmenter, morph_vocab, morph_tagger):
+                continue
+            # Проверяем, не является ли синоним тем же самым словом
+            elif lemmatize_word(synonym.lower(), segmenter, morph_vocab,
+                                morph_tagger) == anglicism_lemma or synonym.lower() == anglicism.lower():
+                continue
+            else:
+                all_valid_synonyms.add(synonym)
 
-    # Если у нас недостаточно валидных синонимов и мы еще не делали рекурсивный вызов
-    if previous_synonyms is None or len(previous_synonyms) < 5:  # Ограничиваем глубину рекурсии
-        # Объединяем уже отклоненные синонимы с новыми отклоненными
-        all_rejected = (previous_synonyms or []) + invalid_synonyms
+    # Преобразуем множество обратно в список
+    final_valid_synonyms = list(all_valid_synonyms)
 
-        # Рекурсивно вызываем функцию еще раз с указанием отклоненных вариантов
-        print(f"Недостаточно валидных синонимов для '{anglicism}', генерирую новые...")
-        new_synonyms = generate_synonyms(anglicism, model, tokenizer, device, segmenter, morph_vocab, morph_tagger,
-                                         anglicisms_set, all_rejected, num_synonyms)
-
-        # Если у нас есть несколько валидных синонимов и несколько новых, объединяем их
-        if valid_synonyms:
-            combined = valid_synonyms + new_synonyms
-            return combined[:num_synonyms]
-
-        return new_synonyms
-
-    # Если после нескольких попыток все равно не хватает синонимов, дополняем список существующими
-    print(f"После нескольких попыток не удалось получить достаточно валидных синонимов для '{anglicism}'")
-    while len(valid_synonyms) < num_synonyms:
-        if valid_synonyms:
-            valid_synonyms.append(valid_synonyms[0])
-        else:
-            # В крайнем случае, если вообще нет валидных синонимов, используем сам англицизм
-            print(f"Не удалось найти ни одного валидного синонима для '{anglicism}', используем сам англицизм")
-            valid_synonyms.append(anglicism)
-
-    return valid_synonyms[:num_synonyms]
+    # Возвращаем все найденные валидные синонимы (из словаря + сгенерированные)
+    return final_valid_synonyms
 
 
 def simple_replace_in_text(text, anglicism, synonym):
@@ -342,6 +371,7 @@ def check_text_for_anglicisms(text, segmenter, morph_vocab, morph_tagger, anglic
 
     return found_anglicisms
 
+
 # Функция для извлечения текста в кавычках
 def extract_quoted_text(text):
     if pd.isna(text) or not isinstance(text, str):
@@ -368,6 +398,7 @@ def extract_quoted_text(text):
             print(f"Ошибка при обработке шаблона '{pattern}': {e}")
 
     return quoted_words
+
 
 # Функция для определения, есть ли перед словом точка
 def has_dot_before(text, word_pos):
@@ -429,8 +460,8 @@ def transform_sentence_with_synonym(anglicism, replaced_text, model, tokenizer, 
 
     # Декодирование ответа
     transformed_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-    print(f"ОТЛАДКА. ПРОМПТ: {messages}")
-    print(f"ОТЛАДКА. Ответ: {transformed_text}")
+    # print(f"ОТЛАДКА. ПРОМПТ: {messages}")
+    # print(f"ОТЛАДКА. Ответ: {transformed_text}")
 
     return transformed_text
 
@@ -448,7 +479,7 @@ def calculate_semantic_similarity(original_text, replaced_text, semantic_model):
 
 
 def replace_anglicisms(text, anglicisms, model, tokenizer, semantic_model, device, segmenter, morph_vocab, morph_tagger,
-                       anglicisms_set, exceptions_lemmas=None, stopwords_lemmas=None):
+                       anglicisms_set, exceptions_lemmas=None, stopwords_lemmas=None, anglicism_dict=None):
     """Replace anglicisms in the text using the two-stage approach."""
     original_text = text
     replacement_details = {}
@@ -464,8 +495,12 @@ def replace_anglicisms(text, anglicisms, model, tokenizer, semantic_model, devic
     synonyms_map = {}
     for anglicism in anglicisms:
         synonyms = generate_synonyms(anglicism, model, tokenizer, device, segmenter, morph_vocab, morph_tagger,
-                                     anglicisms_set, num_synonyms=10)
-        print(f"Сгенерированные синонимы для '{anglicism}': {synonyms}")
+                                     anglicisms_set, num_synonyms=5, anglicism_dict=anglicism_dict)
+
+        # Если для какого-то англицизма не найдено ни одного синонима, пропускаем предложение
+        if not synonyms:
+            return None, None
+
         synonyms_map[anglicism] = synonyms
 
     # Step 2: Generate all possible combinations of replacements
@@ -479,9 +514,7 @@ def replace_anglicisms(text, anglicisms, model, tokenizer, semantic_model, devic
 
     # Step 4: Sort by similarity and take top
     replacement_similarities.sort(key=lambda x: x[2], reverse=True)
-    top_replacements = replacement_similarities[:3] # КОЛИЧЕСТВО ПРЕДЛОЖЕНИЙ
-
-    print(f"Selected top replacements with similarities: {[sim for _, _, sim in top_replacements]}")
+    top_replacements = replacement_similarities[:2]  # КОЛИЧЕСТВО ПРЕДЛОЖЕНИЙ
 
     # Step 5: Apply grammatical transformation to each of the top
     transformed_texts = []
@@ -494,19 +527,14 @@ def replace_anglicisms(text, anglicisms, model, tokenizer, semantic_model, devic
                                                      anglicisms_set, exceptions_lemmas, stopwords_lemmas)
 
         if found_anglicisms:
-            print(f"Отклоняем трансформированный текст: {transformed_text}")
-            print(f"Найденные англицизмы: {found_anglicisms}")
             continue  # Пропускаем этот вариант, если найдены англицизмы
 
         final_similarity = calculate_semantic_similarity(original_text, transformed_text, semantic_model)
         transformed_texts.append((transformed_text, combo_details, final_similarity))
-        print(f"Трансформированное предложение: {transformed_text}")
-        print(f"Финальное семантическое сходство: {final_similarity:.4f}")
 
     # Step 6: Choose the best transformed text
     if not transformed_texts:
         # Если все варианты были отклонены из-за наличия англицизмов
-        print(f"Все трансформированные варианты содержат англицизмы. Пример будет пропущен.")
         return None, None  # Возвращаем None, чтобы пропустить этот пример
 
     transformed_texts.sort(key=lambda x: x[2], reverse=True)
@@ -524,10 +552,37 @@ def replace_anglicisms(text, anglicisms, model, tokenizer, semantic_model, devic
     return best_transformed[0], replacement_details
 
 
+def save_batch(batch_data, batch_num, output_dir):
+    """Save a batch of data to a CSV file in the specified directory."""
+    # Создаем уникальное имя файла с номером батча
+    filename = f"etalon_batch_{batch_num:03d}.csv"
+    filepath = os.path.join(output_dir, filename)
+
+    with open(filepath, 'w', encoding='utf-8', newline='') as f:
+        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+
+        # Записываем заголовок
+        writer.writerow(["Original Text", "Anglicisms", "Replaced Text", "Replacement Details"])
+
+        # Записываем данные
+        for row in batch_data:
+            writer.writerow(row)
+
+    print(f"\nBatch {batch_num} saved to {filepath} with {len(batch_data)} rows")
+    return filepath
+
+
 def process_dataset(dataset, model, tokenizer, semantic_model, device, segmenter, morph_vocab, morph_tagger,
-                    anglicisms_set, exceptions_lemmas=None, stopwords_lemmas=None):
-    """Process the entire dataset."""
-    processed_data = []
+                    anglicisms_set, output_dir, batch_size=10, exceptions_lemmas=None, stopwords_lemmas=None,
+                    anglicism_dict=None):
+    """Process the dataset in batches and save each batch."""
+    current_batch = []
+    batch_num = 1
+    processed_count = 0
+    saved_files = []
+
+    # Создаем директорию для сохранения файлов, если её нет
+    ensure_dir(output_dir)
 
     # Инициализация tqdm с общим количеством элементов
     progress_bar = tqdm(
@@ -543,75 +598,56 @@ def process_dataset(dataset, model, tokenizer, semantic_model, device, segmenter
             # Замена англицизмов с выбором наилучшего варианта
             replaced_text, replacement_details = replace_anglicisms(
                 text, anglicisms, model, tokenizer, semantic_model, device, segmenter, morph_vocab, morph_tagger,
-                anglicisms_set, exceptions_lemmas, stopwords_lemmas
+                anglicisms_set, exceptions_lemmas, stopwords_lemmas, anglicism_dict
             )
 
             # Проверяем, был ли пример отклонен (если все варианты содержали англицизмы)
             if replaced_text is None or replacement_details is None:
-                print(f"Пример {i + 1} был пропущен из-за англицизмов во всех вариантах")
-                # НЕ добавляем этот пример в processed_data
                 progress_bar.update(1)
                 continue
 
-            # Сохраняем результаты
-            processed_data.append((
+            # Сохраняем результаты в текущий батч
+            current_batch.append((
                 text,
                 json.dumps(anglicisms, ensure_ascii=False),
                 replaced_text,
                 json.dumps(replacement_details, ensure_ascii=False)
             ))
 
+            processed_count += 1
+
+            # Если достигли размера батча или это последний элемент, сохраняем батч
+            if len(current_batch) >= batch_size or i == len(dataset) - 1:
+                if current_batch:  # Проверяем, что батч не пустой
+                    filepath = save_batch(current_batch, batch_num, output_dir)
+                    saved_files.append(filepath)
+                    batch_num += 1
+                    current_batch = []  # Сбрасываем текущий батч
+
         except Exception as e:
             print(f"Error processing item {i + 1}: {e}")
             import traceback
             traceback.print_exc()
-            # Не добавляем неудачные примеры в итоговый файл
 
         # Обновляем прогресс-бар
         progress_bar.update(1)
 
     # Закрываем прогресс-бар
     progress_bar.close()
-    print(f"Processing completed for {len(processed_data)} items.")
-    return processed_data
-
-
-def save_dataset(data, output_path):
-    """Save the processed dataset to CSV file."""
-    with open(output_path, 'w', encoding='utf-8', newline='') as f:
-        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
-
-        # Записываем заголовок
-        writer.writerow(["Original Text", "Anglicisms", "Replaced Text", "Replacement Details"])
-
-        # Записываем данные
-        for row in data:
-            writer.writerow(row)
-
-    print(f"Dataset saved to {output_path} with {len(data)} rows")
-
-    # Проверка сохраненного файла
-    if os.path.exists(output_path):
-        file_size = os.path.getsize(output_path)
-        print(f"File size: {file_size} bytes")
-
-        # Проверка содержимого файла
-        with open(output_path, 'r', encoding='utf-8') as f:
-            first_lines = [next(f) for _ in range(min(5, len(data) + 1))]
-
-        print("First few lines of the saved file:")
-        for line in first_lines:
-            print(line.strip())
+    print(f"Processing completed. {processed_count} items processed and saved in {batch_num - 1} batches.")
+    return saved_files
 
 
 def main():
     # Paths
     input_path = "assets/anglicisms_dataset.csv"
-    output_path = "assets/y_dataset_with_synonyms.csv"
+    output_dir = "assets/etalons"  # Директория для сохранения батчей
     anglicisms_file = "assets/clean_anglicism_2.txt"  # Путь к файлу с англицизмами
+    anglicism_dict_file = "assets/anglicism_dictionary.csv"  # Путь к файлу со словарем синонимов
 
     # Ensure directories exist
     ensure_dir('assets')
+    ensure_dir(output_dir)
 
     # Device configuration
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -627,6 +663,10 @@ def main():
     # Загрузка списка англицизмов
     print(f"Loading anglicisms from {anglicisms_file}...")
     anglicisms_set = load_anglicisms_set(anglicisms_file, segmenter, morph_vocab, morph_tagger)
+
+    # Загрузка словаря англицизмов с синонимами
+    print(f"Loading anglicism dictionary from {anglicism_dict_file}...")
+    anglicism_dict = load_anglicism_dictionary(anglicism_dict_file)
 
     # Load models and tokenizer
     print("Loading models and tokenizer...")
@@ -652,14 +692,23 @@ def main():
     print(f"Loaded {len(dataset)} examples.")
 
     # Process dataset
-    print("Processing dataset...")
-    processed_data = process_dataset(dataset, model, tokenizer, semantic_model, device, segmenter, morph_vocab,
-                                     morph_tagger, anglicisms_set)
+    print("Processing dataset in batches...")
+    saved_files = process_dataset(
+        dataset,
+        model,
+        tokenizer,
+        semantic_model,
+        device,
+        segmenter,
+        morph_vocab,
+        morph_tagger,
+        anglicisms_set,
+        output_dir,
+        batch_size=10,
+        anglicism_dict=anglicism_dict  # Передаем словарь англицизмов в функцию
+    )
 
-    # Save results
-    print("Saving results...")
-    save_dataset(processed_data, output_path)
-    print(f"Saved results to {output_path}")
+    print(f"Saved results to {len(saved_files)} files in {output_dir}")
 
 
 if __name__ == "__main__":
