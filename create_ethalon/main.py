@@ -376,18 +376,19 @@ class AnglicismReplacer:
 
         return replaced_texts
 
-    def transform_sentence_with_synonym(self, anglicism: str, replaced_text: str) -> str:
+    def transform_sentence_with_synonym(self, anglicism: str, replaced_text: str, combo_details) -> str:
         """Transform sentence with proper grammar based on replacement example."""
-        system_prompt = f"""Ты эксперт по русскому языку. В предложении заменили неуместные слова, но окончания слов могут быть выбраны неправильно.
+        system_prompt = f"""Ты эксперт по русскому языку. 
+        В предложении заменили неуместные слова, но окончания слов могут быть выбраны неправильно.
         Нужно минимально менять предложение, вот пример:
         ДО: "Отметил мэр Игорь Терехов прямой эфир украинского телеканала LIGA."
         ТВОЙ ОТВЕТ: "Отметил мэр Игорь Терехов в прямом эфире украинскому телеканалу LIGA."
         ВАЖНО: Верни только изменённое предложение, без дополнительных объяснений.
         НИ В КОЕМ СЛУЧАЕ НЕЛЬЗЯ ИСПОЛЬЗОВАТЬ СЛОВО "{anglicism}" И ЕГО ПРОИЗВОДНЫЕ.
-        Не забывай, что иногда приходится менять соседние слова, чтобы предложение было согласованным."""
+        Не забывай, что иногда приходится менять соседние слова, чтобы предложение было согласованным.
+        НЕ ИЗМЕНЯЙ СЛОВО "{list(combo_details.values())[0]}", можно только его форму поменять (окончание, приставки и др. например)"""
 
-        user_prompt = f""" Вот предложение без учета правильных грамматических форм.:
-        {replaced_text}. НИ В КОЕМ СЛУЧАЕ НЕЛЬЗЯ ИСПОЛЬЗОВАТЬ СЛОВО "{anglicism}" или его производные."""
+        user_prompt = replaced_text
 
         # Format messages according to model format
         messages = [
@@ -476,7 +477,7 @@ class AnglicismReplacer:
         transformed_texts = []
         for replaced_text, combo_details, similarity in top_replacements:
             # Transform with proper grammar
-            transformed_text = self.transform_sentence_with_synonym(anglicism, replaced_text)
+            transformed_text = self.transform_sentence_with_synonym(anglicism, replaced_text, combo_details)
 
             # Check transformed text for anglicisms
             found_anglicisms = self.check_text_for_anglicisms(
@@ -527,11 +528,11 @@ class AnglicismReplacer:
             for row in batch_data:
                 writer.writerow(row)
 
-        print(f"Batch {batch_num} saved to {filepath} with {len(batch_data)} rows")
+        print(f"\nBatch {batch_num} saved to {filepath} with {len(batch_data)} rows")
         return filepath
 
     def process_dataset(self, dataset: List[Tuple[str, List[str]]], output_dir: str,
-                        batch_size: int = 10, exceptions_lemmas: Optional[Set[str]] = None,
+                        batch_size: int = 100, exceptions_lemmas: Optional[Set[str]] = None,
                         stopwords_lemmas: Optional[Set[str]] = None) -> List[str]:
         """Process dataset in batches and save each batch."""
         current_batch = []
@@ -605,7 +606,7 @@ class AnglicismReplacer:
         print(f"Skipped {skipped_count} items (no synonyms in dictionary or other issues).")
         return saved_files
 
-    def process_file(self, input_path: str, output_dir: str, batch_size: int = 10) -> List[str]:
+    def process_file(self, input_path: str, output_dir: str, batch_size: int = 100) -> List[str]:
         """Process a file from start to finish."""
         # Load dataset
         print(f"Loading dataset from {input_path}...")
@@ -638,7 +639,7 @@ def main():
     )
 
     # Process file
-    replacer.process_file(input_path, output_dir, batch_size=10)
+    replacer.process_file(input_path, output_dir, batch_size=100)
 
 
 if __name__ == "__main__":
