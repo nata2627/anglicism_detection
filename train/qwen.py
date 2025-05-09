@@ -24,8 +24,30 @@ torch.manual_seed(42)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(42)
 
-# Выводим версию transformers для отладки
-print(f"Используется версия transformers: {transformers.__version__}")
+# Определение системного промпта
+SYSTEM_PROMPT = """
+Твоя задача - заменить англицизмы в русском тексте на их русские эквиваленты.
+Англицизмы - это заимствованные из английского языка слова, которые могут быть заменены русскими аналогами.
+В тексте англицизмы будут помечены тегами <англицизм> и </англицизм>.
+Например: "Он дал <англицизм>интервью</англицизм>" должно быть заменено на "Он дал беседу".
+Замени только слова в этих тегах и верни текст без тегов разметки.
+Постарайся сохранить исходный смысл текста.
+"""
+
+
+# Функция форматирования промпта для Qwen2.5
+def format_prompt_for_qwen(system_prompt, user_text):
+    """
+    Форматирует промпт в соответствии с требованиями модели Qwen2.5-Instruct
+
+    Args:
+        system_prompt: Системный промпт
+        user_text: Текст пользователя
+
+    Returns:
+        str: Отформатированный промпт
+    """
+    return f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_text}<|im_end|>\n<|im_start|>assistant\n"
 
 
 class AnglicismDataset(Dataset):
@@ -74,8 +96,10 @@ class AnglicismDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data.iloc[idx]
 
-        # Формируем входной текст и целевой текст
-        input_text = f"Заменить англицизмы в тексте: {item['original']}"
+        # Формируем входной текст с правильным форматом для Qwen2.5-Instruct
+        input_text = format_prompt_for_qwen(SYSTEM_PROMPT, item['original'])
+
+        # Целевой текст - только ожидаемый ответ
         target_text = f"{item['replaced']}"
 
         # Токенизируем входной текст
@@ -114,17 +138,19 @@ class AnglicismTrainer:
     def __init__(
             self,
             model_name: str = "Qwen/Qwen2.5-3B-Instruct",
-            train_path: str = "assets/llm_datasets/train_dataset.csv",
-            val_path: str = "assets/llm_datasets/val_dataset.csv",
-            save_path: str = "assets/llm_models/",
-            batch_size: int = 4,
-            max_length: int = 512,
+            train_path: str = "/kaggle/input/anglicism-train-dataset/train_dataset.csv",
+            val_path: str = "/kaggle/input/anglicism-val-dataset/val_dataset.csv",
+            save_path: str = "/kaggle/working/assets/llm_models/",
+            batch_size: int = 1,
+            max_length: int = 128,
             learning_rate: float = 2e-5,
             num_epochs: int = 3,
             warmup_steps: int = 100,
             weight_decay: float = 0.01,
-            logging_steps: int = 10,
-            save_steps: int = 500,
+            logging_steps: int = 1,  # Логирование каждый шаг
+            eval_steps: int = 10,  # Валидация каждые 10 шагов
+            save_steps: int = 10,  # Сохранение каждые 10 шагов
+            gradient_accumulation_steps: int = 4,  # Аккумуляция градиента
             lora_r: int = 16,
             lora_alpha: int = 32,
             lora_dropout: float = 0.05,
@@ -145,11 +171,15 @@ class AnglicismTrainer:
             num_epochs: Количество эпох
             warmup_steps: Количество шагов прогрева
             weight_decay: Коэффициент затухания весов
-            logging_steps: Шаги логирования
+            logging_steps: Шаги логирования (n)
+            eval_steps: Шаги валидации (m)
             save_steps: Шаги сохранения
+            gradient_accumulation_steps: Количество шагов для аккумуляции градиента
             lora_r: Ранг адаптера LoRA
             lora_alpha: Параметр альфа для LoRA
             lora_dropout: Вероятность дропаута для LoRA
+            train_data_fraction: Доля тренировочных данных
+            val_data_fraction: Доля валидационных данных
         """
         self.model_name = model_name
         self.train_path = train_path
@@ -162,7 +192,9 @@ class AnglicismTrainer:
         self.warmup_steps = warmup_steps
         self.weight_decay = weight_decay
         self.logging_steps = logging_steps
+        self.eval_steps = eval_steps
         self.save_steps = save_steps
+        self.gradient_accumulation_steps = gradient_accumulation_steps
         self.lora_r = lora_r
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
@@ -172,8 +204,8 @@ class AnglicismTrainer:
         # Инициализируем токенизатор
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
-        # Добавляем специальные токены для разметки англицизмов
-        self.special_tokens = ["<англицизм>", "</англицизм>"]
+        # Добавляем специальные токены для разметки англицизмов и формата Qwen2.5
+        self.special_tokens = ["<англицизм>", "</англицизм>", "<|im_start|>", "<|im_end|>"]
         special_tokens_dict = {"additional_special_tokens": self.special_tokens}
 
         # Убеждаемся, что у токенизатора есть pad_token
@@ -215,16 +247,16 @@ class AnglicismTrainer:
             num_train_epochs=self.num_epochs,
             warmup_steps=self.warmup_steps,
             weight_decay=self.weight_decay,
-            logging_steps=self.logging_steps,
+            logging_steps=self.logging_steps,  # Логирование каждый шаг
             eval_strategy="steps",
-            eval_steps=10, # КАК ЧАСТО ПРОВОДИТЕЛЬ ВАЛИДАЦИЮ, КОЛИЧЕСТВО ШАГОВ
+            eval_steps=self.eval_steps,  # Валидация каждые eval_steps шагов
             save_strategy="steps",
-            save_steps=10,  # КАК ЧАСТО СОХРАНЯТЬ МОДЕЛЬ, КОЛИЧЕСТВО ШАГОВ, КРАТНО 10
+            save_steps=self.save_steps,  # Сохранение каждые save_steps шагов
             load_best_model_at_end=True,
             metric_for_best_model="rougeL",
             greater_is_better=True,
             report_to="wandb",
-            save_total_limit=5,
+            save_total_limit=3,
             push_to_hub=False,
             remove_unused_columns=False,
             prediction_loss_only=False,  # Важно для получения предсказаний, а не только потерь
@@ -303,11 +335,6 @@ class AnglicismTrainer:
         """
         predictions, labels = eval_pred
 
-        # Отладочная информация
-        print(f"Тип предсказаний: {type(predictions)}")
-        print(
-            f"Форма предсказаний: {np.array(predictions).shape if hasattr(predictions, 'shape') else 'Нет атрибута shape'}")
-
         # Преобразуем предсказания в ожидаемый формат
         if isinstance(predictions, list) and isinstance(predictions[0], list):
             # Если предсказания в виде списка списков, преобразуем их в плоский список
@@ -337,41 +364,52 @@ class AnglicismTrainer:
             decoded_preds = [pred.strip() for pred in decoded_preds]
             decoded_labels = [label.strip() for label in decoded_labels]
 
+            # Очищаем предсказания от системных промптов и форматных токенов
+            cleaned_preds = []
+            for pred in decoded_preds:
+                # Проверяем и извлекаем только часть ответа ассистента
+                if "<|im_start|>assistant" in pred:
+                    # Извлекаем текст между маркерами начала ответа ассистента и конца сообщения
+                    parts = pred.split("<|im_start|>assistant\n")
+                    if len(parts) > 1:
+                        assistant_response = parts[1]
+                        # Проверяем наличие маркера конца
+                        if "<|im_end|>" in assistant_response:
+                            assistant_response = assistant_response.split("<|im_end|>")[0]
+                        cleaned_preds.append(assistant_response.strip())
+                    else:
+                        cleaned_preds.append(pred.strip())
+                else:
+                    # Если формат не соответствует ожидаемому, используем оригинальное предсказание
+                    cleaned_preds.append(pred.strip())
+
             # Логируем примеры в W&B, если он инициализирован
             if wandb.run is not None:
-                # Выбираем до 5 случайных примеров для логирования
-                num_examples = min(5, len(decoded_preds))
-                example_indices = np.random.choice(len(decoded_preds), num_examples, replace=False)
+                # Создаем таблицу с примером текста для отображения в интерфейсе wandb
+                example_table = wandb.Table(columns=["Target", "Prediction"])
 
-                examples_table = []
-                for idx in example_indices:
-                    examples_table.append([decoded_labels[idx], decoded_preds[idx]])
+                # Выбираем первый пример для логирования согласно требованиям
+                if len(cleaned_preds) > 0:
+                    # Добавляем пример в таблицу
+                    example_table.add_data(decoded_labels[0], cleaned_preds[0])
 
-                # Создаем таблицу для W&B
-                wandb.log({
-                    "examples": wandb.Table(
-                        columns=["Целевой текст", "Предсказание модели"],
-                        data=examples_table
-                    )
-                })
-
-                # Логируем также отдельно первый пример для удобства просмотра
-                if len(decoded_preds) > 0:
+                    # Логируем таблицу и отдельные строки
                     wandb.log({
+                        "examples_table": example_table,
                         "example_target": decoded_labels[0],
-                        "example_prediction": decoded_preds[0]
+                        "example_prediction": cleaned_preds[0]
                     })
 
             # Вычисляем ROUGE
             rouge_results = self.rouge.compute(
-                predictions=decoded_preds,
+                predictions=cleaned_preds,
                 references=decoded_labels,
                 use_stemmer=True
             )
 
             # Вычисляем BLEU
             bleu_results = self.bleu.compute(
-                predictions=decoded_preds,
+                predictions=cleaned_preds,
                 references=[[label] for label in decoded_labels]
             )
 
@@ -447,6 +485,8 @@ class AnglicismTrainer:
                 config={
                     "model_name": self.model_name,
                     "batch_size": self.batch_size,
+                    "gradient_accumulation_steps": self.gradient_accumulation_steps,
+                    "effective_batch_size": self.batch_size * self.gradient_accumulation_steps,
                     "learning_rate": self.learning_rate,
                     "num_epochs": self.num_epochs,
                     "max_length": self.max_length,
@@ -457,7 +497,8 @@ class AnglicismTrainer:
                     "val_data_fraction": self.val_data_fraction,
                     "train_examples": len(self.train_dataset),
                     "val_examples": len(self.val_dataset),
-                    "total_training_steps": len(self.train_dataset) * self.num_epochs // self.batch_size,
+                    "total_training_steps": len(self.train_dataset) * self.num_epochs // (
+                            self.batch_size * self.gradient_accumulation_steps),
                     "transformers_version": transformers.__version__,  # Добавляем версию библиотеки
                 }
             )
@@ -474,19 +515,16 @@ class AnglicismTrainer:
         # Добавляем метку для решения проблемы с PeftModelForCausalLM
         callbacks = [EarlyStoppingCallback(early_stopping_patience=3)]
 
-        # Проверяем, поддерживает ли Trainer аргумент label_names
-        trainer_args = {
-            "model": self.model,
-            "args": self.training_args,
-            "train_dataset": self.train_dataset,
-            "eval_dataset": self.val_dataset,
-            "data_collator": self.data_collator,
-            "compute_metrics": self.compute_metrics,
-            "callbacks": callbacks,
-        }
-
         # Инициализируем тренер
-        trainer = Trainer(**trainer_args)
+        trainer = Trainer(
+            model=self.model,
+            args=self.training_args,
+            train_dataset=self.train_dataset,
+            eval_dataset=self.val_dataset,
+            data_collator=self.data_collator,
+            compute_metrics=self.compute_metrics,
+            callbacks=callbacks,
+        )
 
         # Обучаем модель
         try:
@@ -502,7 +540,8 @@ class AnglicismTrainer:
             try:
                 print("Попытка сохранения модели после ошибки...")
                 trainer.save_model(os.path.join(self.save_path, "model_after_error"))
-                self.tokenizer.save_pretrained(os.path.join(self.save_path, "model_after_error"))
+                self.tokenizer.save_pretrained(os.path.join(self.save_path, "model_after_error"),
+                                               save_embedding_layers=True)
                 print("Модель сохранена после ошибки!")
             except Exception as save_error:
                 print(f"Не удалось сохранить модель: {save_error}")
@@ -515,7 +554,7 @@ class AnglicismTrainer:
 
         # Сохраняем модель
         trainer.save_model(os.path.join(self.save_path, "final_model"))
-        self.tokenizer.save_pretrained(os.path.join(self.save_path, "final_model"))
+        self.tokenizer.save_pretrained(os.path.join(self.save_path, "final_model"), save_embedding_layers=True)
 
         # Завершаем W&B
         wandb.finish()
@@ -532,8 +571,8 @@ class AnglicismTrainer:
         Returns:
             str: Текст с замененными англицизмами
         """
-        # Формируем запрос к модели
-        input_text = f"Заменить англицизмы в тексте: {text}"
+        # Формируем запрос к модели с системным промптом в формате Qwen2.5
+        input_text = format_prompt_for_qwen(SYSTEM_PROMPT, text)
 
         # Токенизируем входной текст
         inputs = self.tokenizer(
@@ -557,34 +596,61 @@ class AnglicismTrainer:
         # Декодируем предсказание
         output_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-        return output_text
+        # Извлекаем только ответ ассистента из форматированного вывода
+        if "<|im_start|>assistant" in output_text:
+            parts = output_text.split("<|im_start|>assistant\n")
+            if len(parts) > 1:
+                output_text = parts[1]
+                # Удаляем конечный маркер, если он есть
+                if "<|im_end|>" in output_text:
+                    output_text = output_text.split("<|im_end|>")[0]
+        # Если формат не соответствует, проверяем наличие системного промпта
+        elif SYSTEM_PROMPT in output_text:
+            output_text = output_text.replace(SYSTEM_PROMPT, "").strip()
+
+        # Убеждаемся, что все теги разметки удалены из выходного текста
+        import re
+        output_text = re.sub(r'<англицизм>|</англицизм>', '', output_text)
+        # Удаляем также все оставшиеся маркеры формата Qwen2.5
+        output_text = re.sub(r'<\|im_start\|>|<\|im_end\|>|system|user|assistant', '', output_text)
+
+        return output_text.strip()
 
 
 # Пример использования
 def main():
+    print("\n\n==== ЗАПУСК ОСНОВНОЙ ФУНКЦИИ ====\n\n")
     # Инициализируем тренер с LoRA
     trainer = AnglicismTrainer(
         model_name="Qwen/Qwen2.5-3B-Instruct",
-        train_path="assets/llm_datasets/train_dataset.csv",
-        val_path="assets/llm_datasets/val_dataset.csv",
-        save_path="assets/llm_models/",
-        batch_size=1,  # Увеличиваем размер батча для ускорения обучения
+        train_path="/kaggle/input/anglicism-train-dataset/train_dataset.csv",
+        val_path="/kaggle/input/anglicism-val-dataset/val_dataset.csv",
+        save_path="/kaggle/working/assets/llm_models/",
+        batch_size=1,
         max_length=256,
         learning_rate=2e-5,
         num_epochs=3,
+        logging_steps=1,  # Логирование каждый шаг
+        eval_steps=100,  # Валидация каждые 100 шагов
+        save_steps=100,  # Сохранение каждые 100 шагов
+        gradient_accumulation_steps=4,  # Аккумуляция градиента
         lora_r=16,
         lora_alpha=32,
         lora_dropout=0.05,
-        train_data_fraction=0.0005,  # Используем 20% данных для обучения
-        val_data_fraction=0.001  # Используем 20% данных для валидации
+        train_data_fraction=0.005,
+        val_data_fraction=0.01
     )
 
     # Оценка количества итераций
     print(f"Размер тренировочного датасета: {len(trainer.train_dataset)} примеров")
     print(f"Размер батча: {trainer.batch_size}")
+    print(f"Аккумуляция градиента: {trainer.gradient_accumulation_steps} шагов")
+    print(f"Эффективный размер батча: {trainer.batch_size * trainer.gradient_accumulation_steps}")
     print(f"Количество эпох: {trainer.num_epochs}")
-    print(f"Ожидаемое количество итераций в эпохе: {len(trainer.train_dataset) // trainer.batch_size}")
-    total_iterations = (len(trainer.train_dataset) // trainer.batch_size) * trainer.num_epochs
+    print(
+        f"Ожидаемое количество итераций в эпохе: {len(trainer.train_dataset) // (trainer.batch_size * trainer.gradient_accumulation_steps)}")
+    total_iterations = (len(trainer.train_dataset) // (
+            trainer.batch_size * trainer.gradient_accumulation_steps)) * trainer.num_epochs
     print(f"Общее ожидаемое количество итераций: {total_iterations}")
 
     # Обучаем модель
@@ -592,37 +658,9 @@ def main():
 
     # Сохраняем только адаптеры LoRA и токенизатор
     final_model_path = os.path.join(trainer.save_path, "final_lora_model")
-    trainer.save_model(final_model_path)
+    trainer.model.save_pretrained(final_model_path, save_embedding_layers=True)
+    trainer.tokenizer.save_pretrained(final_model_path, save_embedding_layers=True)
 
-    # Пример загрузки и использования модели
-    print("\nПример загрузки и использования модели:")
-    loaded_trainer = AnglicismTrainer.load_model(final_model_path)
-
-    # Примеры текстов с англицизмами
-    test_texts = [
-        "Поводов для эвакуации жителей Харькова пока нет, заявил мэр Игорь Терехов в <англицизм>интервью</англицизм> украинскому изданию LIGA.",
-        "Начался новый <англицизм>тренд</англицизм> в социальных сетях, связанный с изучением иностранных языков.",
-        "Разработчики выпустили новый <англицизм>апдейт</англицизм> для популярного приложения."
-    ]
-
-    # Генерируем замены
-    for text in test_texts:
-        replaced_text = loaded_trainer.generate_replacement(text)
-        print(f"\nОригинал: {text}")
-        print(f"Замена: {replaced_text}")
-
-
-if __name__ == "__main__":
-    main()
-
-    # Обучаем модель
-    trainer.train()
-
-    # Пример использования обученной модели
-    test_text = "Поводов для эвакуации жителей Харькова пока нет, заявил мэр Игорь Терехов в <англицизм>интервью</англицизм> украинскому изданию LIGA."
-    replaced_text = trainer.generate_replacement(test_text)
-    print(f"Original: {test_text}")
-    print(f"Replaced: {replaced_text}")
 
 if __name__ == "__main__":
     main()
