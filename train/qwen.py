@@ -29,26 +29,33 @@ SYSTEM_PROMPT = """
 Твоя задача - заменить англицизмы в русском тексте на их русские эквиваленты.
 Англицизмы - это заимствованные из английского языка слова, которые могут быть заменены русскими аналогами.
 В тексте англицизмы будут помечены тегами <англицизм> и </англицизм>.
-Например: "Он дал <англицизм>интервью</англицизм>" должно быть заменено на "Он дал беседу".
-Замени только слова в этих тегах и верни текст без тегов разметки.
-Постарайся сохранить исходный смысл текста.
+ВЕРНИ ТОЛЬКО ИТОГОВЫЙ ТЕКСТ
 """
 
 
 # Функция форматирования промпта для Qwen2.5
-def format_prompt_for_qwen(system_prompt, user_text):
+def format_prompt_for_qwen(system_prompt, user_text, tokenizer):
     """
     Форматирует промпт в соответствии с требованиями модели Qwen2.5-Instruct
+    используя встроенный метод apply_chat_template
 
     Args:
         system_prompt: Системный промпт
         user_text: Текст пользователя
+        tokenizer: Токенизатор модели
 
     Returns:
         str: Отформатированный промпт
     """
-    return f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_text}<|im_end|>\n<|im_start|>assistant\n"
-
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_text}
+    ]
+    return tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
 
 class AnglicismDataset(Dataset):
     """Датасет для задачи замены англицизмов"""
@@ -96,8 +103,8 @@ class AnglicismDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data.iloc[idx]
 
-        # Формируем входной текст с правильным форматом для Qwen2.5-Instruct
-        input_text = format_prompt_for_qwen(SYSTEM_PROMPT, item['original'])
+        # Формируем входной текст с использованием apply_chat_template
+        input_text = format_prompt_for_qwen(SYSTEM_PROMPT, item['original'], self.tokenizer)
 
         # Целевой текст - только ожидаемый ответ
         target_text = f"{item['replaced']}"
@@ -267,7 +274,6 @@ class AnglicismTrainer:
     def _setup_lora(self):
         """Настраиваем LoRA для эффективного обучения модели"""
         print("Setting up LoRA...")
-
         # Подготавливаем модель для обучения
         try:
             self.model = prepare_model_for_kbit_training(self.model)
@@ -275,39 +281,30 @@ class AnglicismTrainer:
         except Exception as e:
             print(f"Предупреждение: не удалось подготовить модель для kbit тренировки: {e}")
             print("Продолжаем с LoRA настройкой без kbit подготовки")
-
         # Соберем все возможные имена модулей для LoRA
         print("Анализ структуры модели для LoRA...")
         module_names = []
         for name, _ in self.model.named_modules():
             if any(x in name for x in ["query", "key", "value", "attention", "mlp", "dense", "feed_forward"]):
                 module_names.append(name)
-
         # Определим имена целевых модулей на основе структуры модели
         target_modules = []
-
         # Проверим структуру модели и найдем общие паттерны
         if any(("q_proj" in name) for name, _ in self.model.named_modules()):
             target_modules.extend(["q_proj", "v_proj", "k_proj", "o_proj"])
-
         if any(("query" in name) for name, _ in self.model.named_modules()):
             target_modules.extend(["query", "value", "key", "dense"])
-
         if any(("gate_proj" in name) for name, _ in self.model.named_modules()):
             target_modules.extend(["gate_proj", "up_proj", "down_proj"])
-
         if any(("mlp.dense_h_to_4h" in name) for name, _ in self.model.named_modules()):
             target_modules.extend(["mlp.dense_h_to_4h", "mlp.dense_4h_to_h"])
-
         # Если не удалось определить структуру, используем универсальное решение
         if not target_modules:
             print("Не удалось определить структуру модели для LoRA, использую универсальный подход")
             target_modules = ["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h"]
-
         # Удаляем дубликаты в target_modules
         target_modules = list(set(target_modules))
         print(f"Выбраны целевые модули для LoRA: {target_modules}")
-
         # Настраиваем LoRA конфигурацию
         lora_config = LoraConfig(
             r=self.lora_r,  # Ранг адаптера
@@ -317,17 +314,15 @@ class AnglicismTrainer:
             bias="none",  # Не обучаем смещения
             task_type=TaskType.CAUSAL_LM  # Тип задачи
         )
-
         # Создаем LoRA модель
         self.model = get_peft_model(self.model, lora_config)
-
         # Выводим информацию о LoRA модели
         self.model.print_trainable_parameters()
 
     def compute_metrics(self, eval_pred):
         """
         Вычисление метрик для валидации и логирование примеров в W&B
-        Оптимизировано для экономии памяти
+        Оптимизировано для корректной обработки ответов модели
 
         Args:
             eval_pred: Предсказания модели
@@ -352,7 +347,7 @@ class AnglicismTrainer:
 
         labels_subset = labels[:max_eval_samples]
 
-        # Проверяем, может ли это быть логитами (трехмерный тензор: [batch, seq_len, vocab_size])
+        # Проверяем, может ли это быть логитами (трехмерный тензор)
         if isinstance(predictions_subset, np.ndarray) and len(predictions_subset.shape) == 3:
             # Берем индекс максимального логита для каждого токена
             predictions_subset = np.argmax(predictions_subset, axis=-1)
@@ -373,57 +368,50 @@ class AnglicismTrainer:
             decoded_preds = [pred.strip() for pred in decoded_preds]
             decoded_labels = [label.strip() for label in decoded_labels]
 
-            # Очищаем предсказания от системных промптов и форматных токенов
-            cleaned_preds = []
-            for pred in decoded_preds:
-                # Проверяем и извлекаем только часть ответа ассистента
-                if "<|im_start|>assistant" in pred:
-                    # Извлекаем текст между маркерами начала ответа ассистента и конца сообщения
-                    parts = pred.split("<|im_start|>assistant\n")
-                    if len(parts) > 1:
-                        assistant_response = parts[1]
-                        # Проверяем наличие маркера конца
-                        if "<|im_end|>" in assistant_response:
-                            assistant_response = assistant_response.split("<|im_end|>")[0]
-                        cleaned_preds.append(assistant_response.strip())
-                    else:
-                        cleaned_preds.append(pred.strip())
-                else:
-                    # Если формат не соответствует ожидаемому, используем оригинальное предсказание
-                    cleaned_preds.append(pred.strip())
-
             # Логируем примеры в W&B, если он инициализирован
             if wandb.run is not None:
-                # Создаем таблицу с примером текста для отображения в интерфейсе wandb
-                example_table = wandb.Table(columns=["Target", "Prediction"])
+                # Получаем текущий шаг обучения для логирования
+                current_step = wandb.run.step
 
-                # Выбираем первый пример для логирования согласно требованиям
-                if len(cleaned_preds) > 0:
-                    # Добавляем пример в таблицу
-                    example_table.add_data(decoded_labels[0], cleaned_preds[0])
+                # Создаем таблицу с примерами для отображения в интерфейсе wandb
+                table_name = f"examples_table_step_{current_step}"
+                example_table = wandb.Table(columns=["Step", "Target", "Prediction"])
 
-                    # Логируем таблицу и отдельные строки
+                # Добавляем несколько примеров в таблицу (до 5)
+                num_examples = min(5, len(decoded_preds))
+                for i in range(num_examples):
+                    example_table.add_data(current_step, decoded_labels[i], decoded_preds[i])
+
+                # Логируем таблицу с текущим шагом
+                wandb.log({
+                    table_name: example_table,
+                    "examples/step": current_step,
+                    "examples/target_0": decoded_labels[0],
+                    "examples/prediction_0": decoded_preds[0],
+                })
+
+                # Если доступно больше одного примера, логируем также второй пример
+                if len(decoded_preds) > 1:
                     wandb.log({
-                        "examples_table": example_table,
-                        "example_target": decoded_labels[0],
-                        "example_prediction": cleaned_preds[0]
+                        "examples/target_1": decoded_labels[1],
+                        "examples/prediction_1": decoded_preds[1],
                     })
 
             # Вычисляем ROUGE только на подмножестве данных
             rouge_results = self.rouge.compute(
-                predictions=cleaned_preds,
+                predictions=decoded_preds,
                 references=decoded_labels,
                 use_stemmer=True
             )
 
             # Вычисляем BLEU на том же подмножестве
             bleu_results = self.bleu.compute(
-                predictions=cleaned_preds,
+                predictions=decoded_preds,
                 references=[[label] for label in decoded_labels]
             )
 
             # Освобождаем память
-            del decoded_preds, decoded_labels, cleaned_preds, predictions_subset, labels_subset
+            del decoded_preds, decoded_labels, predictions_subset, labels_subset
 
             # Явно вызываем сборщик мусора для освобождения памяти
             import gc
@@ -584,7 +572,8 @@ class AnglicismTrainer:
 
     def generate_replacement(self, text):
         """
-        Генерация замен для текста с англицизмами
+        Генерация замен для текста с англицизмами с использованием
+        оптимизированной обработки ответа модели
 
         Args:
             text: Входной текст с размеченными англицизмами
@@ -592,8 +581,17 @@ class AnglicismTrainer:
         Returns:
             str: Текст с замененными англицизмами
         """
-        # Формируем запрос к модели с системным промптом в формате Qwen2.5
-        input_text = format_prompt_for_qwen(SYSTEM_PROMPT, text)
+        # Формируем запрос к модели с использованием apply_chat_template
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": text}
+        ]
+
+        input_text = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
 
         # Токенизируем входной текст
         inputs = self.tokenizer(
@@ -604,7 +602,7 @@ class AnglicismTrainer:
             return_tensors="pt"
         ).to(self.model.device)
 
-        # Генерируем предсказание с температурной выборкой для разнообразия
+        # Генерируем предсказание
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
@@ -614,26 +612,17 @@ class AnglicismTrainer:
                 top_p=0.9
             )
 
-        # Декодируем предсказание
-        output_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # Отделяем только новые токены (ответ модели)
+        generated_ids = [
+            output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, outputs)
+        ]
 
-        # Извлекаем только ответ ассистента из форматированного вывода
-        if "<|im_start|>assistant" in output_text:
-            parts = output_text.split("<|im_start|>assistant\n")
-            if len(parts) > 1:
-                output_text = parts[1]
-                # Удаляем конечный маркер, если он есть
-                if "<|im_end|>" in output_text:
-                    output_text = output_text.split("<|im_end|>")[0]
-        # Если формат не соответствует, проверяем наличие системного промпта
-        elif SYSTEM_PROMPT in output_text:
-            output_text = output_text.replace(SYSTEM_PROMPT, "").strip()
+        # Декодируем только ответ модели
+        output_text = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
-        # Убеждаемся, что все теги разметки удалены из выходного текста
+        # Удаляем возможные оставшиеся теги разметки
         import re
         output_text = re.sub(r'<англицизм>|</англицизм>', '', output_text)
-        # Удаляем также все оставшиеся маркеры формата Qwen2.5
-        output_text = re.sub(r'<\|im_start\|>|<\|im_end\|>|system|user|assistant', '', output_text)
 
         return output_text.strip()
 
@@ -643,7 +632,7 @@ def main():
     print("\n\n==== ЗАПУСК ОСНОВНОЙ ФУНКЦИИ ====\n\n")
     # Инициализируем тренер с LoRA
     trainer = AnglicismTrainer(
-        model_name="Qwen/Qwen2.5-1.5B-Instruct",
+        model_name="Qwen/Qwen2.5-3B-Instruct",
         train_path="/kaggle/input/anglicism-train-dataset/train_dataset.csv",
         val_path="/kaggle/input/anglicism-val-dataset/val_dataset.csv",
         save_path="/kaggle/working/assets/llm_models/",
