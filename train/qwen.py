@@ -111,7 +111,7 @@ class AnglicismDataset(Dataset):
 
         # Токенизируем входной текст
         inputs = self.tokenizer(
-            input_text,
+            [input_text],
             max_length=self.max_length,
             padding="max_length",
             truncation=True,
@@ -120,7 +120,7 @@ class AnglicismDataset(Dataset):
 
         # Токенизируем целевой текст для получения меток
         targets = self.tokenizer(
-            target_text,
+            [target_text],
             max_length=self.max_length,
             padding="max_length",
             truncation=True,
@@ -212,7 +212,7 @@ class AnglicismTrainer:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
         # Добавляем специальные токены для разметки англицизмов и формата Qwen2.5
-        self.special_tokens = ["<англицизм>", "</англицизм>", "<|im_start|>", "<|im_end|>"]
+        self.special_tokens = ["<англицизм>", "</англицизм>"]
         special_tokens_dict = {"additional_special_tokens": self.special_tokens}
 
         # Убеждаемся, что у токенизатора есть pad_token
@@ -238,7 +238,6 @@ class AnglicismTrainer:
 
         # Инициализируем метрики
         self.rouge = evaluate.load("rouge")
-        self.bleu = evaluate.load("bleu")
 
         # Инициализируем датасеты с возможностью использования только части данных
         self.train_dataset = AnglicismDataset(train_path, self.tokenizer, max_length,
@@ -249,7 +248,7 @@ class AnglicismTrainer:
         self.training_args = TrainingArguments(
             output_dir=self.save_path,
             per_device_train_batch_size=self.batch_size,
-            per_device_eval_batch_size=1,  # Уменьшаем размер батча для валидации до 1
+            per_device_eval_batch_size=1,
             learning_rate=self.learning_rate,
             num_train_epochs=self.num_epochs,
             warmup_steps=self.warmup_steps,
@@ -364,50 +363,57 @@ class AnglicismTrainer:
                 labels_subset, skip_special_tokens=True
             )
 
-            # Очищаем предсказания и метки
-            decoded_preds = [pred.strip() for pred in decoded_preds]
-            decoded_labels = [label.strip() for label in decoded_labels]
+            def extract_response(text, is_prediction=True):
+                # Для Qwen2.5, ответ обычно находится после маркера помощника
+                parts = text.split("<|assistant|>")
+                if len(parts) > 1:
+                    return parts[-1].strip()
+                return text.strip()
+
+            # Применение к предсказаниям и меткам
+            decoded_preds = [extract_response(pred, is_prediction=True) for pred in decoded_preds]
+            decoded_labels = [extract_response(label, is_prediction=False) for label in decoded_labels]
 
             # Логируем примеры в W&B, если он инициализирован
             if wandb.run is not None:
                 # Получаем текущий шаг обучения для логирования
                 current_step = wandb.run.step
 
-                # Создаем таблицу с примерами для отображения в интерфейсе wandb
-                table_name = f"examples_table_step_{current_step}"
-                example_table = wandb.Table(columns=["Step", "Target", "Prediction"])
+                # Создаем словарь с примерами для логирования
+                examples_dict = {}
 
-                # Добавляем несколько примеров в таблицу (до 5)
-                num_examples = min(5, len(decoded_preds))
-                for i in range(num_examples):
-                    example_table.add_data(current_step, decoded_labels[i], decoded_preds[i])
-
-                # Логируем таблицу с текущим шагом
-                wandb.log({
-                    table_name: example_table,
-                    "examples/step": current_step,
+                # Добавляем первый пример всегда
+                examples_dict.update({
                     "examples/target_0": decoded_labels[0],
                     "examples/prediction_0": decoded_preds[0],
                 })
 
-                # Если доступно больше одного примера, логируем также второй пример
-                if len(decoded_preds) > 1:
-                    wandb.log({
-                        "examples/target_1": decoded_labels[1],
-                        "examples/prediction_1": decoded_preds[1],
+                # Если доступно больше одного примера, логируем несколько дополнительных примеров
+                num_examples_to_log = min(5, len(decoded_preds))  # Логируем до 5 примеров
+                for i in range(1, num_examples_to_log):
+                    examples_dict.update({
+                        f"examples/target_{i}": decoded_labels[i],
+                        f"examples/prediction_{i}": decoded_preds[i],
                     })
+
+                # Создаем и обновляем таблицу с примерами для более наглядного отображения
+                example_rows = []
+                for i in range(num_examples_to_log):
+                    example_rows.append([current_step, i, decoded_labels[i], decoded_preds[i]])
+
+                # Логируем таблицу в виде артефакта, чтобы она сохранялась между вызовами
+                examples_table = wandb.Table(columns=["Step", "Example_ID", "Target", "Prediction"],
+                                             data=example_rows)
+                wandb.log({"examples_table": examples_table})
+
+                # Логируем также в обычном формате ключ-значение
+                wandb.log(examples_dict)
 
             # Вычисляем ROUGE только на подмножестве данных
             rouge_results = self.rouge.compute(
                 predictions=decoded_preds,
                 references=decoded_labels,
                 use_stemmer=True
-            )
-
-            # Вычисляем BLEU на том же подмножестве
-            bleu_results = self.bleu.compute(
-                predictions=decoded_preds,
-                references=[[label] for label in decoded_labels]
             )
 
             # Освобождаем память
@@ -423,9 +429,7 @@ class AnglicismTrainer:
             # Объединяем метрики
             results = {
                 "rouge1": rouge_results["rouge1"],
-                "rouge2": rouge_results["rouge2"],
-                "rougeL": rouge_results["rougeL"],
-                "bleu": bleu_results["bleu"]
+                "rougeL": rouge_results["rougeL"]
             }
 
             return results
@@ -437,7 +441,10 @@ class AnglicismTrainer:
                 torch.cuda.empty_cache()
 
             # В случае ошибки возвращаем базовые метрики
-            return {"error": str(e), "rouge1": 0.0, "rouge2": 0.0, "rougeL": 0.0, "bleu": 0.0}
+            return {"error": str(e), "rouge1": 0.0, "rouge2": 0.0, "rougeL": 0.0}
+
+
+
 
     def data_collator(self, features):
         """
@@ -570,69 +577,13 @@ class AnglicismTrainer:
 
         print("Training completed!")
 
-    def generate_replacement(self, text):
-        """
-        Генерация замен для текста с англицизмами с использованием
-        оптимизированной обработки ответа модели
-
-        Args:
-            text: Входной текст с размеченными англицизмами
-
-        Returns:
-            str: Текст с замененными англицизмами
-        """
-        # Формируем запрос к модели с использованием apply_chat_template
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": text}
-        ]
-
-        input_text = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
-
-        # Токенизируем входной текст
-        inputs = self.tokenizer(
-            input_text,
-            max_length=self.max_length,
-            padding=False,
-            truncation=True,
-            return_tensors="pt"
-        ).to(self.model.device)
-
-        # Генерируем предсказание
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=self.max_length,
-                temperature=0.7,
-                do_sample=True,
-                top_p=0.9
-            )
-
-        # Отделяем только новые токены (ответ модели)
-        generated_ids = [
-            output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, outputs)
-        ]
-
-        # Декодируем только ответ модели
-        output_text = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-
-        # Удаляем возможные оставшиеся теги разметки
-        import re
-        output_text = re.sub(r'<англицизм>|</англицизм>', '', output_text)
-
-        return output_text.strip()
-
 
 # Пример использования
 def main():
     print("\n\n==== ЗАПУСК ОСНОВНОЙ ФУНКЦИИ ====\n\n")
     # Инициализируем тренер с LoRA
     trainer = AnglicismTrainer(
-        model_name="Qwen/Qwen2.5-3B-Instruct",
+        model_name="Qwen/Qwen2.5-1.5B-Instruct",
         train_path="/kaggle/input/anglicism-train-dataset/train_dataset.csv",
         val_path="/kaggle/input/anglicism-val-dataset/val_dataset.csv",
         save_path="/kaggle/working/assets/llm_models/",
@@ -641,8 +592,8 @@ def main():
         learning_rate=2e-5,
         num_epochs=3,
         logging_steps=1,  # Логирование каждый шаг
-        eval_steps=100,  # Валидация каждые 100 шагов
-        save_steps=100,  # Сохранение каждые 100 шагов
+        eval_steps=1000,  # Валидация каждые 100 шагов
+        save_steps=3000,  # Сохранение каждые 100 шагов
         gradient_accumulation_steps=4,  # Аккумуляция градиента
         lora_r=16,
         lora_alpha=32,
