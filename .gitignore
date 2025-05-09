@@ -23,3 +23,5 @@ parse_anglicism/utils/__pycache__/
 # Outputs
 outputs/
 assets/models
+wandb
+assets/llm_models
