@@ -242,16 +242,16 @@ class AnglicismTrainer:
         self.training_args = TrainingArguments(
             output_dir=self.save_path,
             per_device_train_batch_size=self.batch_size,
-            per_device_eval_batch_size=self.batch_size,
+            per_device_eval_batch_size=1,  # Уменьшаем размер батча для валидации до 1
             learning_rate=self.learning_rate,
             num_train_epochs=self.num_epochs,
             warmup_steps=self.warmup_steps,
             weight_decay=self.weight_decay,
-            logging_steps=self.logging_steps,  # Логирование каждый шаг
+            logging_steps=self.logging_steps,
             eval_strategy="steps",
-            eval_steps=self.eval_steps,  # Валидация каждые eval_steps шагов
+            eval_steps=self.eval_steps,
             save_strategy="steps",
-            save_steps=self.save_steps,  # Сохранение каждые save_steps шагов
+            save_steps=self.save_steps,
             load_best_model_at_end=True,
             metric_for_best_model="rougeL",
             greater_is_better=True,
@@ -259,8 +259,9 @@ class AnglicismTrainer:
             save_total_limit=3,
             push_to_hub=False,
             remove_unused_columns=False,
-            prediction_loss_only=False,  # Важно для получения предсказаний, а не только потерь
-            run_name=f"anglicism-{wandb.util.generate_id()}"  # Уникальное имя для запуска
+            prediction_loss_only=False,
+            eval_accumulation_steps=4,  # Аккумулируем выходы модели во время валидации
+            run_name=f"anglicism-{wandb.util.generate_id()}"
         )
 
     def _setup_lora(self):
@@ -326,6 +327,7 @@ class AnglicismTrainer:
     def compute_metrics(self, eval_pred):
         """
         Вычисление метрик для валидации и логирование примеров в W&B
+        Оптимизировано для экономии памяти
 
         Args:
             eval_pred: Предсказания модели
@@ -335,29 +337,36 @@ class AnglicismTrainer:
         """
         predictions, labels = eval_pred
 
-        # Преобразуем предсказания в ожидаемый формат
-        if isinstance(predictions, list) and isinstance(predictions[0], list):
-            # Если предсказания в виде списка списков, преобразуем их в плоский список
-            predictions = [item for sublist in predictions for item in sublist]
+        # Ограничиваем количество примеров для вычисления метрик
+        max_eval_samples = min(100, len(predictions)) if isinstance(predictions, list) else min(100,
+                                                                                                predictions.shape[0])
+
+        # Выбираем подмножество данных для метрик
+        if isinstance(predictions, list):
+            if isinstance(predictions[0], list):
+                predictions_subset = [predictions[i] for i in range(max_eval_samples)]
+            else:
+                predictions_subset = predictions[:max_eval_samples]
+        else:
+            predictions_subset = predictions[:max_eval_samples]
+
+        labels_subset = labels[:max_eval_samples]
 
         # Проверяем, может ли это быть логитами (трехмерный тензор: [batch, seq_len, vocab_size])
-        if isinstance(predictions, np.ndarray) and len(predictions.shape) == 3:
+        if isinstance(predictions_subset, np.ndarray) and len(predictions_subset.shape) == 3:
             # Берем индекс максимального логита для каждого токена
-            predictions = np.argmax(predictions, axis=-1)
-
-        # Обеспечиваем, что предсказания являются numpy массивом
-        predictions = np.array(predictions) if not isinstance(predictions, np.ndarray) else predictions
+            predictions_subset = np.argmax(predictions_subset, axis=-1)
 
         try:
             # Декодируем предсказания и метки
             decoded_preds = self.tokenizer.batch_decode(
-                predictions, skip_special_tokens=True
+                predictions_subset, skip_special_tokens=True
             )
 
             # Преобразуем -100 обратно в pad_token_id для корректного декодирования
-            labels = np.where(labels != -100, labels, self.tokenizer.pad_token_id)
+            labels_subset = np.where(labels_subset != -100, labels_subset, self.tokenizer.pad_token_id)
             decoded_labels = self.tokenizer.batch_decode(
-                labels, skip_special_tokens=True
+                labels_subset, skip_special_tokens=True
             )
 
             # Очищаем предсказания и метки
@@ -400,18 +409,28 @@ class AnglicismTrainer:
                         "example_prediction": cleaned_preds[0]
                     })
 
-            # Вычисляем ROUGE
+            # Вычисляем ROUGE только на подмножестве данных
             rouge_results = self.rouge.compute(
                 predictions=cleaned_preds,
                 references=decoded_labels,
                 use_stemmer=True
             )
 
-            # Вычисляем BLEU
+            # Вычисляем BLEU на том же подмножестве
             bleu_results = self.bleu.compute(
                 predictions=cleaned_preds,
                 references=[[label] for label in decoded_labels]
             )
+
+            # Освобождаем память
+            del decoded_preds, decoded_labels, cleaned_preds, predictions_subset, labels_subset
+
+            # Явно вызываем сборщик мусора для освобождения памяти
+            import gc
+            gc.collect()
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             # Объединяем метрики
             results = {
@@ -424,8 +443,10 @@ class AnglicismTrainer:
             return results
         except Exception as e:
             print(f"Ошибка при вычислении метрик: {e}")
-            print(f"Форма предсказаний: {predictions.shape if hasattr(predictions, 'shape') else 'Нет атрибута shape'}")
-            print(f"Пример предсказания: {predictions[0] if len(predictions) > 0 else 'Нет предсказаний'}")
+
+            # Освобождаем память при ошибке
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             # В случае ошибки возвращаем базовые метрики
             return {"error": str(e), "rouge1": 0.0, "rouge2": 0.0, "rougeL": 0.0, "bleu": 0.0}
@@ -554,7 +575,7 @@ class AnglicismTrainer:
 
         # Сохраняем модель
         trainer.save_model(os.path.join(self.save_path, "final_model"))
-        self.tokenizer.save_pretrained(os.path.join(self.save_path, "final_model"), save_embedding_layers=True)
+        self.tokenizer.save_pretrained(os.path.join(self.save_path, "final_model"))
 
         # Завершаем W&B
         wandb.finish()
@@ -622,7 +643,7 @@ def main():
     print("\n\n==== ЗАПУСК ОСНОВНОЙ ФУНКЦИИ ====\n\n")
     # Инициализируем тренер с LoRA
     trainer = AnglicismTrainer(
-        model_name="Qwen/Qwen2.5-3B-Instruct",
+        model_name="Qwen/Qwen2.5-1.5B-Instruct",
         train_path="/kaggle/input/anglicism-train-dataset/train_dataset.csv",
         val_path="/kaggle/input/anglicism-val-dataset/val_dataset.csv",
         save_path="/kaggle/working/assets/llm_models/",
@@ -659,7 +680,7 @@ def main():
     # Сохраняем только адаптеры LoRA и токенизатор
     final_model_path = os.path.join(trainer.save_path, "final_lora_model")
     trainer.model.save_pretrained(final_model_path, save_embedding_layers=True)
-    trainer.tokenizer.save_pretrained(final_model_path, save_embedding_layers=True)
+    trainer.tokenizer.save_pretrained(final_model_path)
 
 
 if __name__ == "__main__":
