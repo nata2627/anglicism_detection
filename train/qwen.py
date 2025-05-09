@@ -583,7 +583,7 @@ def main():
     print("\n\n==== ЗАПУСК ОСНОВНОЙ ФУНКЦИИ ====\n\n")
     # Инициализируем тренер с LoRA
     trainer = AnglicismTrainer(
-        model_name="Qwen/Qwen2.5-1.5B-Instruct",
+        model_name="Qwen/Qwen2.5-3B-Instruct",
         train_path="/kaggle/input/anglicism-train-dataset/train_dataset.csv",
         val_path="/kaggle/input/anglicism-val-dataset/val_dataset.csv",
         save_path="/kaggle/working/assets/llm_models/",
@@ -591,15 +591,15 @@ def main():
         max_length=256,
         learning_rate=2e-5,
         num_epochs=3,
-        logging_steps=1,  # Логирование каждый шаг
-        eval_steps=1000,  # Валидация каждые 100 шагов
-        save_steps=3000,  # Сохранение каждые 100 шагов
-        gradient_accumulation_steps=4,  # Аккумуляция градиента
+        logging_steps=10,  # Логирование каждый 10 шаг
+        eval_steps=500,  # Валидация каждые 500 шагов
+        save_steps=1500,  # Сохранение каждые 1500 шагов
+        gradient_accumulation_steps=16,  # Аккумуляция градиента
         lora_r=16,
         lora_alpha=32,
         lora_dropout=0.05,
-        train_data_fraction=0.005,
-        val_data_fraction=0.01
+        train_data_fraction=1,
+        val_data_fraction=0.1
     )
 
     # Оценка количества итераций
