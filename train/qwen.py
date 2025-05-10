@@ -27,7 +27,7 @@ class WandbTableCallback(TrainerCallback):
     """Callback для создания таблицы с примерами в wandb."""
 
     def __init__(self, trainer, dataset, tokenizer, model, num_fixed_examples=3, num_random_examples=3,
-                 log_examples_every=10):
+                 log_examples_every=50):
         self.trainer = trainer
         self.dataset = dataset
         self.tokenizer = tokenizer
@@ -388,7 +388,7 @@ class AngliclsmReplacementTrainer:
             remove_unused_columns=False,
             gradient_accumulation_steps=16,
             optim="adamw_torch",
-            logging_steps=10
+            logging_steps=1
         )
 
         # Инициализация тренера с добавлением валидационного датасета
