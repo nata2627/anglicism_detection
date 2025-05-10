@@ -27,14 +27,14 @@ class WandbTableCallback(TrainerCallback):
     """Callback для создания таблицы с примерами в wandb."""
 
     def __init__(self, trainer, dataset, tokenizer, model, num_fixed_examples=3, num_random_examples=3,
-                 log_every_steps=10):
+                 log_examples_every=10):
         self.trainer = trainer
         self.dataset = dataset
         self.tokenizer = tokenizer
         self.model = model
         self.num_fixed_examples = num_fixed_examples
         self.num_random_examples = num_random_examples
-        self.log_every_steps = log_every_steps
+        self.log_examples_every = log_examples_every
 
         # Создаем таблицу wandb
         self.examples_data = []  # Храним данные для таблицы
@@ -48,8 +48,20 @@ class WandbTableCallback(TrainerCallback):
 
     def on_step_end(self, args, state, control, **kwargs):
         """Вызывается после каждого шага обучения."""
-        if state.global_step % self.log_every_steps == 0:
-            wandb.log({"train/loss": state.log_history[-1]['loss'] if state.log_history else 0}, step=state.global_step)
+        if state.global_step % self.log_examples_every == 0:
+            # Безопасное получение значения loss из log_history
+            try:
+                # Перебираем записи в обратном порядке, чтобы найти последнюю с ключом 'loss'
+                current_loss = 0
+                if state.log_history:
+                    for entry in reversed(state.log_history):
+                        if 'loss' in entry:
+                            current_loss = entry['loss']
+                            break
+                wandb.log({"train/loss": current_loss}, step=state.global_step)
+            except Exception as e:
+                print(f"Ошибка при логировании loss: {e}")
+                # Продолжаем выполнение даже при ошибке логирования
 
             # Создаем таблицу для текущего шага
             current_examples = []
@@ -151,6 +163,9 @@ class AngliclsmReplacementTrainer:
             self,
             model_name="Qwen/Qwen2.5-1.5B-Instruct",
             dataset_path="/kaggle/input/anglicism-train-dataset/train_dataset.csv",
+            validation_path="/kaggle/input/anglicism-val-dataset/val_dataset.csv",
+            # Добавлен путь к валидационному набору
+            validation_fraction=0.1,  # Доля валидационных данных для использования
             output_dir="/kaggle/working/assets/train/",
             wandb_project="anglicism-replacement",
             wandb_entity=None,  # Ваш логин или организация на wandb
@@ -163,13 +178,18 @@ class AngliclsmReplacementTrainer:
             max_length=256,
             weight_decay=0.01,
             warmup_ratio=0.1,
-            log_examples_every=10,  # Логировать примеры каждые N шагов
+            save_steps=100,  # Сохранять модель каждые 100 шагов
+            eval_steps=1000,  # Проводить валидацию каждые 1000 шагов
+            save_total_limit=5,  # Хранить не более 5 моделей
+            log_examples_every=200,  # Логировать примеры каждые N шагов
             num_fixed_examples=3,  # Количество фиксированных примеров
             num_random_examples=3,  # Количество случайных примеров
             device="cuda" if torch.cuda.is_available() else "cpu"
     ):
         self.model_name = model_name
         self.dataset_path = dataset_path
+        self.validation_path = validation_path  # Добавлен путь к валидационному набору
+        self.validation_fraction = validation_fraction  # Доля валидационных данных
         self.output_dir = output_dir
         self.wandb_project = wandb_project
         self.wandb_entity = wandb_entity
@@ -182,6 +202,9 @@ class AngliclsmReplacementTrainer:
         self.max_length = max_length
         self.weight_decay = weight_decay
         self.warmup_ratio = warmup_ratio
+        self.save_steps = save_steps  # Добавлен параметр для сохранения по шагам
+        self.eval_steps = eval_steps  # Добавлен параметр для валидации по шагам
+        self.save_total_limit = save_total_limit  # Добавлено ограничение на количество сохраняемых моделей
         self.log_examples_every = log_examples_every
         self.num_fixed_examples = num_fixed_examples
         self.num_random_examples = num_random_examples
@@ -205,6 +228,10 @@ class AngliclsmReplacementTrainer:
                 "max_length": max_length,
                 "weight_decay": weight_decay,
                 "warmup_ratio": warmup_ratio,
+                "save_steps": save_steps,  # Добавлено в конфигурацию
+                "eval_steps": eval_steps,  # Добавлено в конфигурацию
+                "save_total_limit": save_total_limit,  # Добавлено в конфигурацию
+                "validation_fraction": validation_fraction,  # Доля валидационных данных
                 "num_fixed_examples": num_fixed_examples,
                 "num_random_examples": num_random_examples,
             }
@@ -247,13 +274,21 @@ class AngliclsmReplacementTrainer:
         self.model = get_peft_model(self.model, lora_config)
         print(f"Модель загружена и подготовлена для обучения с LoRA")
 
-    def _prepare_dataset(self):
-        """Подготовка датасета для обучения"""
-        print("Загрузка и подготовка датасета...")
+    def _create_dataset(self, data_path, fraction=1.0):
+        """Создание датасета из CSV файла с возможностью выбора доли данных"""
 
         class AnglicismDataset(Dataset):
-            def __init__(self, data_path, tokenizer, max_length):
-                self.data = pd.read_csv(data_path)
+            def __init__(self, data_path, tokenizer, max_length, fraction=1.0):
+                # Загружаем данные
+                full_data = pd.read_csv(data_path)
+
+                # Если нужна только часть данных, берем случайную выборку
+                if fraction < 1.0:
+                    self.data = full_data.sample(frac=fraction, random_state=42)
+                    print(f"Используется {len(self.data)} из {len(full_data)} примеров ({fraction * 100:.1f}%)")
+                else:
+                    self.data = full_data
+
                 self.tokenizer = tokenizer
                 self.max_length = max_length
 
@@ -305,25 +340,49 @@ class AngliclsmReplacementTrainer:
                     "labels": labels
                 }
 
-        self.dataset = AnglicismDataset(self.dataset_path, self.tokenizer, self.max_length)
-        print(f"Датасет подготовлен, количество примеров: {len(self.dataset)}")
+        return AnglicismDataset(data_path, self.tokenizer, self.max_length, fraction=fraction)
+
+    def _prepare_dataset(self):
+        """Подготовка тренировочного датасета"""
+        print("Загрузка и подготовка тренировочного датасета...")
+        self.dataset = self._create_dataset(self.dataset_path, fraction=1.0)
+        print(f"Тренировочный датасет подготовлен, количество примеров: {len(self.dataset)}")
+
+    def _prepare_validation_dataset(self):
+        """Подготовка валидационного датасета с использованием указанной доли данных"""
+        print(
+            f"Загрузка и подготовка валидационного датасета (используется {self.validation_fraction * 100:.1f}% данных)...")
+        self.validation_dataset = self._create_dataset(
+            self.validation_path,
+            fraction=self.validation_fraction
+        )
+        print(f"Валидационный датасет подготовлен, количество примеров: {len(self.validation_dataset)}")
 
     def train(self):
         """Обучение модели"""
         self._load_tokenizer_and_model()
         self._prepare_dataset()
+        self._prepare_validation_dataset()  # Загружаем валидационный датасет
 
-        # Настройка параметров обучения
+        # Настройка параметров обучения с новыми опциями
         training_args = TrainingArguments(
             output_dir=self.output_dir,
             overwrite_output_dir=True,
             num_train_epochs=self.num_epochs,
             per_device_train_batch_size=self.batch_size,
+            per_device_eval_batch_size=self.batch_size,  # Размер батча для валидации
             learning_rate=self.learning_rate,
             weight_decay=self.weight_decay,
             warmup_ratio=self.warmup_ratio,
-            save_strategy="epoch",
-            save_total_limit=1,
+            # Новые параметры для сохранения и валидации
+            save_strategy="steps",  # Стратегия сохранения по шагам
+            save_steps=self.save_steps,  # Сохраняем каждые N шагов
+            save_total_limit=self.save_total_limit,  # Максимальное количество сохраняемых моделей
+            eval_strategy="steps",  # Стратегия оценки по шагам
+            eval_steps=self.eval_steps,  # Оцениваем каждые N шагов
+            load_best_model_at_end=True,  # Загрузить лучшую модель в конце
+            metric_for_best_model="eval_loss",  # Метрика для определения лучшей модели
+            greater_is_better=False,  # Для loss меньше значит лучше
             fp16=True,
             report_to="wandb",  # Включаем отчеты в wandb
             remove_unused_columns=False,
@@ -332,11 +391,12 @@ class AngliclsmReplacementTrainer:
             logging_steps=10
         )
 
-        # Инициализация тренера
+        # Инициализация тренера с добавлением валидационного датасета
         trainer = Trainer(
             model=self.model,
             args=training_args,
             train_dataset=self.dataset,
+            eval_dataset=self.validation_dataset,  # Добавляем валидационный датасет
             data_collator=DataCollatorForLanguageModeling(tokenizer=self.tokenizer, mlm=False)
         )
 
@@ -347,8 +407,7 @@ class AngliclsmReplacementTrainer:
             tokenizer=self.tokenizer,
             model=self.model,
             num_fixed_examples=self.num_fixed_examples,
-            num_random_examples=self.num_random_examples,
-            log_every_steps=self.log_examples_every
+            num_random_examples=self.num_random_examples
         )
 
         trainer.add_callback(wandb_table_callback)
@@ -367,6 +426,11 @@ class AngliclsmReplacementTrainer:
 
 
 if __name__ == "__main__":
-    # Пример использования класса
-    trainer = AngliclsmReplacementTrainer()
+    # Пример использования класса с новыми параметрами
+    trainer = AngliclsmReplacementTrainer(
+        validation_fraction=0.05,  # Использовать % валидационных данных
+        save_steps=1000,  # Сохранение
+        eval_steps=1000,  # Валидация
+        save_total_limit=5  # Хранить не более 5 моделей
+    )
     trainer.train()
