@@ -174,14 +174,14 @@ class AngliclsmReplacementTrainer:
             lora_dropout=0.05,
             batch_size=1,
             num_epochs=3,
-            learning_rate=2e-4,
+            learning_rate=1e-4,
             max_length=256,
             weight_decay=0.01,
             warmup_ratio=0.1,
             save_steps=100,  # Сохранять модель каждые 100 шагов
             eval_steps=1000,  # Проводить валидацию каждые 1000 шагов
             save_total_limit=5,  # Хранить не более 5 моделей
-            log_examples_every=200,  # Логировать примеры каждые N шагов
+            log_examples_every=50,  # Логировать примеры каждые N шагов
             num_fixed_examples=3,  # Количество фиксированных примеров
             num_random_examples=3,  # Количество случайных примеров
             device="cuda" if torch.cuda.is_available() else "cpu"
@@ -386,7 +386,7 @@ class AngliclsmReplacementTrainer:
             fp16=True,
             report_to="wandb",  # Включаем отчеты в wandb
             remove_unused_columns=False,
-            gradient_accumulation_steps=4,
+            gradient_accumulation_steps=16,
             optim="adamw_torch",
             logging_steps=10
         )
@@ -429,8 +429,8 @@ if __name__ == "__main__":
     # Пример использования класса с новыми параметрами
     trainer = AngliclsmReplacementTrainer(
         validation_fraction=0.05,  # Использовать % валидационных данных
-        save_steps=1000,  # Сохранение
-        eval_steps=1000,  # Валидация
+        save_steps=250,  # Сохранение
+        eval_steps=250,  # Валидация
         save_total_limit=5  # Хранить не более 5 моделей
     )
     trainer.train()
