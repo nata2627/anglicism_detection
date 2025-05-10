@@ -58,7 +58,7 @@ class WandbTableCallback(TrainerCallback):
                         if 'loss' in entry:
                             current_loss = entry['loss']
                             break
-                wandb.log({"train/loss": current_loss}, step=state.global_step)
+                wandb.log({"train/loss": current_loss})  # Убран параметр step
             except Exception as e:
                 print(f"Ошибка при логировании loss: {e}")
                 # Продолжаем выполнение даже при ошибке логирования
@@ -111,8 +111,8 @@ class WandbTableCallback(TrainerCallback):
             # Создаем новую таблицу из всех накопленных данных
             table = wandb.Table(columns=self.columns, data=self.examples_data)
 
-            # Логируем обновленную таблицу
-            wandb.log({"examples_table": table}, step=state.global_step)
+            # Логируем обновленную таблицу (убран параметр step)
+            wandb.log({"examples_table": table})
 
     def _extract_original_text(self, idx):
         """Извлекает оригинальный текст из датасета."""
