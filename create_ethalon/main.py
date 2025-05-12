@@ -627,7 +627,7 @@ class AnglicismReplacer:
 
 def main():
     # Paths
-    input_path = "assets/anglicisms_dataset.csv"
+    input_path = "assets/anglicisms_dataset2.csv"
     output_dir = "assets/etalons"
     anglicisms_file = "assets/clean_anglicism_2.txt"
     anglicism_dict_file = "assets/anglicism_dictionary.csv"
