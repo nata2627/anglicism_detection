@@ -189,15 +189,15 @@ python llm_inference/main.py
 ├── classic_ML_models/             # Классические алгоритмы ML
 ├── clear_dataset/                 # Предобработка данных
 ├── configs/                       # Файлы конфигураций
-├── create_LLM_dataset/           # Датасеты для LLM
-├── create_classicML_dataset/     # Датасеты для ML
-├── create_ethalon/               # Эталонные данные
-├── label_data/                   # Разметка данных
-├── label_ML_data/               # ML-разметка
-├── llm_inference/               # Инференс LLM
-├── parse_anglicism/             # Парсинг англицизмов
-├── parse_dataset/               # Парсинг новостей
-└── train/                       # Обучение моделей
+├── create_LLM_dataset/            # Датасеты для LLM
+├── create_classicML_dataset/      # Датасеты для ML
+├── create_ethalon/                # Эталонные данные
+├── label_data/                    # Разметка данных
+├── label_ML_data/                 # ML-разметка
+├── llm_inference/                 # Инференс LLM
+├── parse_anglicism/               # Парсинг англицизмов
+├── parse_dataset/                 # Парсинг новостей
+└── train/                         # Обучение моделей
 ```
 
 ## Контакты
