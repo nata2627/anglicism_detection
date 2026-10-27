@@ -32,12 +32,12 @@ def main():
     # Функция загрузки модели
     def load_model():
         model = AutoPeftModelForCausalLM.from_pretrained(
-            "nata2627/angl_detection_tokenizer_qwen",
+            "nata2627/anglicism-rewriter-qwen2.5-1.5b-lora",
             device_map="auto",
             torch_dtype=torch.float16,
             ignore_mismatched_sizes=True
         )
-        tokenizer = AutoTokenizer.from_pretrained("nata2627/angl_detection_tokenizer_qwen")
+        tokenizer = AutoTokenizer.from_pretrained("nata2627/anglicism-rewriter-qwen2.5-1.5b-lora")
         model = model.to("cuda" if torch.cuda.is_available() else "cpu")
         model.eval()
         return model, tokenizer
