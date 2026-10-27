@@ -25,3 +25,5 @@ outputs/
 assets/models
 wandb
 assets/llm_models
+# Картинки для README
+!assets/readme/*.png
